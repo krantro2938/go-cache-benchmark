@@ -5,7 +5,6 @@ import (
 	"cache-bench/internal/caches"
 	"fmt"
 	"log"
-	"os"
 	"runtime"
 	"time"
 )
@@ -97,29 +96,15 @@ func main() {
 
 func runBenchmarks(configID string, cacheSizeBytes int64, workload *bench.Workload, w *bench.DataWriter) {
 	// Helper to run a single cache benchmark
-	runCache := func(c caches.Cache, isRedis bool) {
+	runCache := func(c caches.Cache) {
 		// Ensure we clean up this cache before moving to the next one
 		defer runtime.GC()
 		defer c.Close()
 
 		fmt.Printf("  → %s\n", c.Name())
 
-		// For Redis, we might want to use a smaller subset of the workload if it's too slow
-		// But for now, we'll just run it. The user can control Redis execution via env var.
-		// If we wanted to limit Redis specifically, we could slice the workload here.
-		// However, to keep results comparable (hit ratio etc), we should run the same workload.
-		// Given the user's request to "reduce something for redis", we will slice the workload
-		// for Redis to 10% of the total ops if the workload is huge (> 5M ops).
-		
-		effectiveWorkload := workload
-		if isRedis && len(workload.Operations) > 5_000_000 {
-			fmt.Println("    (Running reduced workload for Redis to save time)")
-			reducedOps := workload.Operations[:len(workload.Operations)/10]
-			effectiveWorkload = &bench.Workload{Operations: reducedOps}
-		}
-
 		start := time.Now()
-		result := bench.RunBenchmark(c, effectiveWorkload)
+		result := bench.RunBenchmark(c, workload)
 		duration := time.Since(start)
 
 		hitRatio := float64(result.Hits) / float64(result.Hits+result.Misses)
@@ -135,30 +120,23 @@ func runBenchmarks(configID string, cacheSizeBytes int64, workload *bench.Worklo
 		w.WriteMemory(configID, c.Name(), result.MemoryMB)
 	}
 
-	// Redis (only once, but include in all configs)
-	if redisAddr := os.Getenv("REDIS_ADDR"); redisAddr != "" {
-		if redisCache, err := caches.NewRedisCache(redisAddr); err == nil {
-			runCache(redisCache, true)
-		}
-	}
-
 	// Ristretto
 	if r, err := caches.NewRistrettoCache(cacheSizeBytes); err == nil {
-		runCache(r, false)
+		runCache(r)
 	}
 
 	// Otter
 	if o, err := caches.NewOtterCache(int(cacheSizeBytes)); err == nil { // Otter ignores size arg
-		runCache(o, false)
+		runCache(o)
 	}
 
 	// BigCache
 	if b, err := caches.NewBigCache(cacheSizeBytes); err == nil {
-		runCache(b, false)
+		runCache(b)
 	}
 
 	// GoCache (approximate size)
 	maxItems := int(cacheSizeBytes / int64(BaseValueSize))
 	gc := caches.NewGoCache(maxItems)
-	runCache(gc, false)
+	runCache(gc)
 }
