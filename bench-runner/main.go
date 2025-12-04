@@ -35,8 +35,8 @@ func main() {
 		fmt.Printf("=== Running config: %s ===\n", cs.id)
 		workload := bench.GenerateWorkload(bench.WorkloadConfig{
 			Seed:         42,
-			KeySpaceSize: 10_000_000, // 10M keys
-			TotalOps:     20_000_000, // 20M ops
+			KeySpaceSize: 1_000_000, // 1M keys
+			TotalOps:     2_000_000, // 2M ops
 			ValueSize:    BaseValueSize,
 			Skew:         0.99,
 		})
@@ -60,8 +60,8 @@ func main() {
 		fmt.Printf("=== Running config: %s ===\n", vs.id)
 		workload := bench.GenerateWorkload(bench.WorkloadConfig{
 			Seed:         42,
-			KeySpaceSize: 1_000_000,
-			TotalOps:     5_000_000,
+			KeySpaceSize: 100_000,
+			TotalOps:     500_000,
 			ValueSize:    vs.size,
 			Skew:         0.95,
 		})
@@ -85,8 +85,8 @@ func main() {
 		fmt.Printf("=== Running config: %s ===\n", s.id)
 		workload := bench.GenerateWorkload(bench.WorkloadConfig{
 			Seed:         42,
-			KeySpaceSize: 5_000_000,
-			TotalOps:     10_000_000,
+			KeySpaceSize: 500_000,
+			TotalOps:     1_000_000,
 			ValueSize:    BaseValueSize,
 			Skew:         s.skew,
 		})
