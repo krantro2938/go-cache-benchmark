@@ -14,6 +14,11 @@ func NewOtterCache(maxCost int) (*OtterCache, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Configure cost function to track bytes, not items
+	builder.Cost(func(key string, value []byte) uint32 {
+		return uint32(len(value))
+	})
+	
 	c, err := builder.Build()
 	if err != nil {
 		return nil, err

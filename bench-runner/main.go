@@ -38,7 +38,7 @@ func main() {
 			KeySpaceSize: 50_000_000,  // 50M keys
 			TotalOps:     100_000_000, // 100M ops
 			ValueSize:    BaseValueSize,
-			Skew:         0.99,
+			Skew:         0.0, // Uniform distribution to force evictions
 		})
 
 		runBenchmarks(cs.id, cs.size, workload, w)

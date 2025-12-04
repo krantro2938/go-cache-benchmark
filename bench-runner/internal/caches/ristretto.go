@@ -42,9 +42,9 @@ func (r *RistrettoCache) Close() error {
 func (r *RistrettoCache) Metrics() Metrics {
 	m := r.cache.Metrics
 	return Metrics{
-		HitCount:  int64(m.Hits()),
-		MissCount: int64(m.Misses()),
-		// EvictionCount: int64(m.KeysEvicted), if you want
+		HitCount:      int64(m.Hits()),
+		MissCount:     int64(m.Misses()),
+		EvictionCount: int64(m.KeysEvicted()),
 	}
 }
 
