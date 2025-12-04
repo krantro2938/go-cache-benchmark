@@ -1,6 +1,7 @@
 package bench
 
 import (
+	"fmt"
 	"math/rand"
 
 	"cache-bench/internal/util"
@@ -47,5 +48,5 @@ func GenerateWorkload(cfg WorkloadConfig) *Workload {
 }
 
 func GenerateKey(id uint64) string {
-	return "key_" + string('a'+byte(id%26)) + "_" + string('0'+byte(id%10))
+	return fmt.Sprintf("key_%d", id)
 }
