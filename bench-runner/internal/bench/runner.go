@@ -53,13 +53,16 @@ func RunBenchmark(cache caches.Cache, workload *Workload) *BenchmarkResult {
 			defer wg.Done()
 			for j := start; j < end; j++ {
 				op := workload.Operations[j]
+				// Generate key on the fly to save memory
+				key := GenerateKey(op.KeyID)
+				
 				startTime := time.Now()
-				if _, ok := cache.Get(op.Key); ok {
+				if _, ok := cache.Get(key); ok {
 					mu.Lock()
 					hits++
 					mu.Unlock()
 				} else {
-					cache.Set(op.Key, op.Value, int64(len(op.Value)))
+					cache.Set(key, workload.SharedValue, int64(len(workload.SharedValue)))
 					mu.Lock()
 					misses++
 					mu.Unlock()

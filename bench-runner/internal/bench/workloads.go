@@ -14,12 +14,12 @@ const (
 )
 
 type Workload struct {
-	Operations []Operation
+	Operations  []Operation
+	SharedValue []byte
 }
 
 type Operation struct {
-	Key   string
-	Value []byte
+	KeyID uint64
 }
 
 type WorkloadConfig struct {
@@ -36,19 +36,16 @@ func GenerateWorkload(cfg WorkloadConfig) *Workload {
 	ops := make([]Operation, cfg.TotalOps)
 
 	// Optimization: Use a shared value buffer to avoid OOM with large datasets.
-	// In a real cache, values might differ, but for benchmarking eviction/overhead,
-	// the content doesn't matter as much as the size.
 	sharedValue := make([]byte, cfg.ValueSize)
 	rng.Read(sharedValue)
 
 	for i := 0; i < cfg.TotalOps; i++ {
 		keyID := zipf.Next() % uint64(cfg.KeySpaceSize)
-		key := generateKey(keyID)
-		ops[i] = Operation{Key: key, Value: sharedValue}
+		ops[i] = Operation{KeyID: keyID}
 	}
-	return &Workload{Operations: ops}
+	return &Workload{Operations: ops, SharedValue: sharedValue}
 }
 
-func generateKey(id uint64) string {
+func GenerateKey(id uint64) string {
 	return "key_" + string('a'+byte(id%26)) + "_" + string('0'+byte(id%10))
 }
