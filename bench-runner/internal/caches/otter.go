@@ -1,3 +1,4 @@
+// bench-runner/internal/caches/otter.go
 package caches
 
 import (
@@ -21,7 +22,6 @@ func NewOtterCache(maxCost int) (*OtterCache, error) {
 }
 
 func (o *OtterCache) Set(key string, value []byte, cost int64) bool {
-	// cost is ignored by Otter
 	return o.cache.Set(key, value)
 }
 
@@ -39,7 +39,6 @@ func (o *OtterCache) Metrics() Metrics {
 	return Metrics{
 		HitCount:  int64(stats.Hits()),
 		MissCount: int64(stats.Misses()),
-		// EvictionCount not available in otter.Stats
 	}
 }
 

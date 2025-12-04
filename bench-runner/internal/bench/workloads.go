@@ -22,15 +22,23 @@ type Operation struct {
 	Value []byte
 }
 
-func GenerateZipfWorkload(seed int64) *Workload {
-	rng := rand.New(rand.NewSource(seed))
-	zipf := util.NewZipfGenerator(rng, KeySpaceSize, 0.99)
-	ops := make([]Operation, TotalOps)
+type WorkloadConfig struct {
+	Seed         int64
+	KeySpaceSize int
+	TotalOps     int
+	ValueSize    int
+	Skew         float64
+}
 
-	for i := 0; i < TotalOps; i++ {
-		keyID := zipf.Next() % KeySpaceSize
+func GenerateWorkload(cfg WorkloadConfig) *Workload {
+	rng := rand.New(rand.NewSource(cfg.Seed))
+	zipf := util.NewZipfGenerator(rng, float64(cfg.KeySpaceSize), cfg.Skew)
+	ops := make([]Operation, cfg.TotalOps)
+
+	for i := 0; i < cfg.TotalOps; i++ {
+		keyID := zipf.Next() % uint64(cfg.KeySpaceSize)
 		key := generateKey(keyID)
-		value := make([]byte, ValueSize)
+		value := make([]byte, cfg.ValueSize)
 		rng.Read(value)
 		ops[i] = Operation{Key: key, Value: value}
 	}
@@ -38,5 +46,5 @@ func GenerateZipfWorkload(seed int64) *Workload {
 }
 
 func generateKey(id uint64) string {
-	return "key_" + string(rune('a'+id%26)) + "_" + string(rune('0'+id%10))
+	return "key_" + string('a'+byte(id%26)) + "_" + string('0'+byte(id%10))
 }
