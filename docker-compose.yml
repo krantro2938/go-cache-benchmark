@@ -1,0 +1,21 @@
+version: "3.8"
+
+services:
+    redis:
+        build: ./redis
+        ports:
+            - "6379:6379"
+        volumes:
+            - redis_data:/data
+
+    bench-runner:
+        build: ./bench-runner
+        depends_on:
+            - redis
+        volumes:
+            - ./results:/app/results
+        environment:
+            - REDIS_ADDR=redis:6379
+
+volumes:
+    redis_data:

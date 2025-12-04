@@ -1,0 +1,4 @@
+cache,hit_ratio
+Redis,1.0000
+Ristretto,0.9968
+Otter,1.0000
