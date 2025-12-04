@@ -43,8 +43,8 @@ func RunBenchmark(cache caches.Cache, workload *Workload) *BenchmarkResult {
 	latencies = make([]time.Duration, 0, len(workload.Operations))
 
 	var wg sync.WaitGroup
-	// Run in 4 parallel goroutines (simulate concurrency)
-	concurrency := 4
+	// Run sequentially
+	concurrency := 1
 	chunkSize := len(workload.Operations) / concurrency
 
 	for i := 0; i < concurrency; i++ {
@@ -95,8 +95,8 @@ func RunBenchmark(cache caches.Cache, workload *Workload) *BenchmarkResult {
 	return &BenchmarkResult{
 		CacheName: cache.Name(),
 		Latencies: latencies,
-		Hits:      hits + metrics.HitCount,
-		Misses:    misses + metrics.MissCount,
+		Hits:      hits,
+		Misses:    misses,
 		Evictions: metrics.EvictionCount,
 		TotalOps:  len(workload.Operations),
 		MemoryMB:  memoryMB,
