@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime"
 	"time"
 )
 
@@ -95,45 +96,15 @@ func main() {
 }
 
 func runBenchmarks(configID string, cacheSizeBytes int64, workload *bench.Workload, w *bench.DataWriter) {
-	cachesList := []caches.Cache{}
+	// Helper to run a single cache benchmark
+	runCache := func(c caches.Cache) {
+		// Ensure we clean up this cache before moving to the next one
+		defer runtime.GC()
+		defer c.Close()
 
-	// Redis (only once, but include in all configs)
-	if redisAddr := os.Getenv("REDIS_ADDR"); redisAddr != "" {
-		if redisCache, err := caches.NewRedisCache(redisAddr); err == nil {
-			cachesList = append(cachesList, redisCache)
-			defer redisCache.Close()
-		}
-	}
-
-	// Ristretto
-	if r, err := caches.NewRistrettoCache(cacheSizeBytes); err == nil {
-		cachesList = append(cachesList, r)
-		defer r.Close()
-	}
-
-	// Otter
-	if o, err := caches.NewOtterCache(int(cacheSizeBytes)); err == nil { // Otter ignores size arg
-		cachesList = append(cachesList, o)
-		defer o.Close()
-	}
-
-	// BigCache
-	if b, err := caches.NewBigCache(cacheSizeBytes); err == nil {
-		cachesList = append(cachesList, b)
-		defer b.Close()
-	}
-
-	// GoCache (approximate size)
-	maxItems := int(cacheSizeBytes / int64(BaseValueSize))
-	gc := caches.NewGoCache(maxItems)
-	cachesList = append(cachesList, gc)
-	// no Close needed
-
-	// Run all
-	for _, cache := range cachesList {
-		fmt.Printf("  → %s\n", cache.Name())
+		fmt.Printf("  → %s\n", c.Name())
 		start := time.Now()
-		result := bench.RunBenchmark(cache, workload)
+		result := bench.RunBenchmark(c, workload)
 		duration := time.Since(start)
 
 		hitRatio := float64(result.Hits) / float64(result.Hits+result.Misses)
@@ -142,10 +113,37 @@ func runBenchmarks(configID string, cacheSizeBytes int64, workload *bench.Worklo
 		p95 := bench.Percentile(result.Latencies, 0.95).Microseconds()
 		p99 := bench.Percentile(result.Latencies, 0.99).Microseconds()
 
-		w.WriteLatency(configID, cache.Name(), float64(p50), float64(p95), float64(p99))
-		w.WriteHitRatio(configID, cache.Name(), hitRatio)
-		w.WriteThroughput(configID, cache.Name(), tps)
-		w.WriteEvictions(configID, cache.Name(), result.Evictions)
-		w.WriteMemory(configID, cache.Name(), result.MemoryMB)
+		w.WriteLatency(configID, c.Name(), float64(p50), float64(p95), float64(p99))
+		w.WriteHitRatio(configID, c.Name(), hitRatio)
+		w.WriteThroughput(configID, c.Name(), tps)
+		w.WriteEvictions(configID, c.Name(), result.Evictions)
+		w.WriteMemory(configID, c.Name(), result.MemoryMB)
 	}
+
+	// Redis (only once, but include in all configs)
+	if redisAddr := os.Getenv("REDIS_ADDR"); redisAddr != "" {
+		if redisCache, err := caches.NewRedisCache(redisAddr); err == nil {
+			runCache(redisCache)
+		}
+	}
+
+	// Ristretto
+	if r, err := caches.NewRistrettoCache(cacheSizeBytes); err == nil {
+		runCache(r)
+	}
+
+	// Otter
+	if o, err := caches.NewOtterCache(int(cacheSizeBytes)); err == nil { // Otter ignores size arg
+		runCache(o)
+	}
+
+	// BigCache
+	if b, err := caches.NewBigCache(cacheSizeBytes); err == nil {
+		runCache(b)
+	}
+
+	// GoCache (approximate size)
+	maxItems := int(cacheSizeBytes / int64(BaseValueSize))
+	gc := caches.NewGoCache(maxItems)
+	runCache(gc)
 }

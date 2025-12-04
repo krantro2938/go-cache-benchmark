@@ -35,12 +35,16 @@ func GenerateWorkload(cfg WorkloadConfig) *Workload {
 	zipf := util.NewZipfGenerator(rng, float64(cfg.KeySpaceSize), cfg.Skew)
 	ops := make([]Operation, cfg.TotalOps)
 
+	// Optimization: Use a shared value buffer to avoid OOM with large datasets.
+	// In a real cache, values might differ, but for benchmarking eviction/overhead,
+	// the content doesn't matter as much as the size.
+	sharedValue := make([]byte, cfg.ValueSize)
+	rng.Read(sharedValue)
+
 	for i := 0; i < cfg.TotalOps; i++ {
 		keyID := zipf.Next() % uint64(cfg.KeySpaceSize)
 		key := generateKey(keyID)
-		value := make([]byte, cfg.ValueSize)
-		rng.Read(value)
-		ops[i] = Operation{Key: key, Value: value}
+		ops[i] = Operation{Key: key, Value: sharedValue}
 	}
 	return &Workload{Operations: ops}
 }
