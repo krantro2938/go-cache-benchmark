@@ -12,7 +12,7 @@ for i in $(seq -w 1 $NUM_RUNS); do
     mkdir -p "$RUN_DIR"
     
     # Run docker-compose with the run-specific volume mount
-    docker-compose run --rm -v "$(pwd)/results/run_$i:/app/results" bench-runner
+    docker compose run --rm -v "$(pwd)/results/run_$i:/app/results" bench-runner
     
     echo "Results saved to $RUN_DIR"
     echo ""
