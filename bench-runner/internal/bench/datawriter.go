@@ -12,6 +12,7 @@ type DataWriter struct {
 	hitratioFile   *csv.Writer
 	evictionsFile  *csv.Writer
 	memoryFile     *csv.Writer
+	gcFile         *csv.Writer
 }
 
 func NewDataWriter() (*DataWriter, error) {
@@ -22,6 +23,7 @@ func NewDataWriter() (*DataWriter, error) {
 	hitratioFile, _ := os.Create("/app/results/hitratio.csv")
 	evictionsFile, _ := os.Create("/app/results/evictions.csv")
 	memoryFile, _ := os.Create("/app/results/memory.csv")
+	gcFile, _ := os.Create("/app/results/gc.csv")
 
 	w := &DataWriter{
 		latencyFile:    csv.NewWriter(latencyFile),
@@ -29,6 +31,7 @@ func NewDataWriter() (*DataWriter, error) {
 		hitratioFile:   csv.NewWriter(hitratioFile),
 		evictionsFile:  csv.NewWriter(evictionsFile),
 		memoryFile:     csv.NewWriter(memoryFile),
+		gcFile:         csv.NewWriter(gcFile),
 	}
 
 	// Write headers
@@ -37,6 +40,7 @@ func NewDataWriter() (*DataWriter, error) {
 	w.hitratioFile.Write([]string{"config_id", "cache", "hit_ratio"})
 	w.evictionsFile.Write([]string{"config_id", "cache", "evictions"})
 	w.memoryFile.Write([]string{"config_id", "cache", "memory_mb"})
+	w.gcFile.Write([]string{"config_id", "cache", "allocs_per_op_k", "gc_pause_us", "gc_cycles_per_sec", "alloc_rate_mb_per_sec"})
 
 	return w, nil
 }
@@ -64,12 +68,24 @@ func (w *DataWriter) WriteMemory(configID, cache string, memoryMB float64) {
 	w.memoryFile.Write([]string{configID, cache, strconv.FormatFloat(memoryMB, 'f', 2, 64)})
 }
 
+func (w *DataWriter) WriteGC(configID, cache string, allocsPerOp, gcPause, gcCycles, allocRate float64) {
+	w.gcFile.Write([]string{
+		configID,
+		cache,
+		strconv.FormatFloat(allocsPerOp, 'f', 4, 64),
+		strconv.FormatFloat(gcPause, 'f', 2, 64),
+		strconv.FormatFloat(gcCycles, 'f', 4, 64),
+		strconv.FormatFloat(allocRate, 'f', 2, 64),
+	})
+}
+
 func (w *DataWriter) Flush() {
 	w.latencyFile.Flush()
 	w.throughputFile.Flush()
 	w.hitratioFile.Flush()
 	w.evictionsFile.Flush()
 	w.memoryFile.Flush()
+	w.gcFile.Flush()
 }
 
 func ensureDir(path string) {

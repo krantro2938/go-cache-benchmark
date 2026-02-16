@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"runtime"
-	"time"
 )
 
 const BaseValueSize = 1024
@@ -103,12 +102,10 @@ func runBenchmarks(configID string, cacheSizeBytes int64, workload *bench.Worklo
 
 		fmt.Printf("  → %s\n", c.Name())
 
-		start := time.Now()
 		result := bench.RunBenchmark(c, workload)
-		duration := time.Since(start)
 
 		hitRatio := float64(result.Hits) / float64(result.Hits+result.Misses)
-		tps := float64(result.TotalOps) / duration.Seconds()
+		tps := float64(result.TotalOps) / result.Duration.Seconds()
 		p50 := bench.Percentile(result.Latencies, 0.50).Microseconds()
 		p95 := bench.Percentile(result.Latencies, 0.95).Microseconds()
 		p99 := bench.Percentile(result.Latencies, 0.99).Microseconds()
@@ -118,6 +115,7 @@ func runBenchmarks(configID string, cacheSizeBytes int64, workload *bench.Worklo
 		w.WriteThroughput(configID, c.Name(), tps)
 		w.WriteEvictions(configID, c.Name(), result.Evictions)
 		w.WriteMemory(configID, c.Name(), result.MemoryMB)
+		w.WriteGC(configID, c.Name(), result.AllocsPerOp, result.GCPause, result.GCCycles, result.AllocRate)
 	}
 
 	// Ristretto

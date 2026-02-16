@@ -48,5 +48,5 @@ func (o *OtterCache) Metrics() Metrics {
 }
 
 func (o *OtterCache) Name() string {
-	return "Otter"
+	return "Adaptive_TinyLFU"
 }
