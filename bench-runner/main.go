@@ -3,9 +3,12 @@ package main
 import (
 	"cache-bench/internal/bench"
 	"cache-bench/internal/caches"
+	"encoding/csv"
 	"fmt"
 	"log"
+	"os"
 	"runtime"
+	"strconv"
 )
 
 const BaseValueSize = 1024
@@ -91,6 +94,58 @@ func main() {
 
 		runBenchmarks(s.id, 256<<20, workload, w)
 	}
+
+	// === 4. Lambda sweep (GCAware only) ===
+	// One fixed config: 256MB cache, skew 0.99, standard skew-group key/op counts.
+	runLambdaSweep()
+}
+
+// runLambdaSweep benchmarks GCAware across a range of λ values over a single
+// fixed config and writes hit ratio / memory / alloc rate per λ to
+// /app/results/lambda_sweep.csv.
+func runLambdaSweep() {
+	fmt.Printf("=== Running lambda sweep (GCAware, 256MB, skew 0.99) ===\n")
+
+	const cacheSizeBytes = 256 << 20
+	workload := bench.GenerateWorkload(bench.WorkloadConfig{
+		Seed:         42,
+		KeySpaceSize: 1_000_000, // 1M keys (standard skew-group counts)
+		TotalOps:     5_000_000, // 5M ops
+		ValueSize:    BaseValueSize,
+		Skew:         0.99,
+	})
+
+	os.MkdirAll("/app/results", 0755)
+	f, err := os.Create("/app/results/lambda_sweep.csv")
+	if err != nil {
+		log.Printf("lambda sweep: cannot create csv: %v", err)
+		return
+	}
+	defer f.Close()
+	cw := csv.NewWriter(f)
+	defer cw.Flush()
+	cw.Write([]string{"lambda", "hit_ratio", "memory_mb", "alloc_rate_mb_per_sec"})
+
+	lambdas := []float64{0.0, 0.3, 0.5, 0.7, 0.9, 1.0}
+	for _, lambda := range lambdas {
+		c, err := caches.NewGCAwareCacheLambda(cacheSizeBytes, lambda)
+		if err != nil {
+			log.Printf("lambda sweep: cannot build cache for λ=%.1f: %v", lambda, err)
+			continue
+		}
+		fmt.Printf("  → GCAware λ=%.1f\n", lambda)
+		result := bench.RunBenchmark(c, workload)
+		hitRatio := float64(result.Hits) / float64(result.Hits+result.Misses)
+		cw.Write([]string{
+			strconv.FormatFloat(lambda, 'f', 1, 64),
+			strconv.FormatFloat(hitRatio, 'f', 4, 64),
+			strconv.FormatFloat(result.MemoryMB, 'f', 2, 64),
+			strconv.FormatFloat(result.AllocRate, 'f', 2, 64),
+		})
+		cw.Flush()
+		c.Close()
+		runtime.GC()
+	}
 }
 
 func runBenchmarks(configID string, cacheSizeBytes int64, workload *bench.Workload, w *bench.DataWriter) {
@@ -137,4 +192,9 @@ func runBenchmarks(configID string, cacheSizeBytes int64, workload *bench.Worklo
 	maxItems := int(cacheSizeBytes / int64(BaseValueSize))
 	gc := caches.NewGoCache(maxItems)
 	runCache(gc)
+
+	// GCAware (Adaptive TinyLFU admission + GC-aware cost function)
+	if g, err := caches.NewGCAwareCache(cacheSizeBytes); err == nil {
+		runCache(g)
+	}
 }
