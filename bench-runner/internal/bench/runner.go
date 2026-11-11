@@ -3,150 +3,120 @@ package bench
 import (
 	"runtime"
 	"sort"
-	"sync"
 	"time"
 
 	"cache-bench/internal/caches"
 )
 
+// BenchmarkResult holds the metrics of one cache on one workload.
 type BenchmarkResult struct {
 	CacheName   string
-	Latencies   []time.Duration
 	Hits        int64
 	Misses      int64
 	Evictions   int64
 	TotalOps    int
-	MemoryMB    float64
-	P50         time.Duration
-	P95         time.Duration
-	P99         time.Duration
-	AllocsPerOp float64   // Allocations per operation (thousands)
-	GCPause     float64   // Total GC pause in microseconds
-	GCCycles    float64   // GC cycles per second
-	AllocRate   float64   // Allocation rate in MB/s
+	MemoryMB    float64 // heap held by the cache: HeapInuse delta (incl. span fragmentation), MB
+	LiveMB      float64 // live objects retained by the cache: HeapAlloc delta, MB
+	P50, P95    float64 // latency percentiles, µs
+	P99         float64
+	AllocsPerOp float64 // heap allocations per operation
+	GCPause     float64 // mean stop-the-world pause per GC cycle, µs
+	GCCycles    float64 // GC cycles per second
+	AllocRate   float64 // MB allocated per second
 	Duration    time.Duration
 }
 
-// Helper to get percentile
-func percentile(latencies []time.Duration, p float64) time.Duration {
-	if len(latencies) == 0 {
-		return 0
-	}
-	index := int(float64(len(latencies)-1) * p)
-	if index < 0 {
-		index = 0
-	}
-	return latencies[index]
-}
+// RunBenchmark builds a cache with newCache and replays the workload against
+// it in look-aside mode: Get; on a miss, load the object (allocate a fresh
+// buffer of the key's size) and Set it.
+//
+// Measurement protocol:
+//   - the latency buffer is allocated and a forced GC is run BEFORE the cache
+//     is constructed, and HeapInuse is recorded as the baseline;
+//   - per-operation latency covers the cache calls only (Get, and Set on a
+//     miss), not the simulated load;
+//   - GC and allocation metrics are the difference of runtime.MemStats taken
+//     right before and right after the request loop (before any forced GC);
+//   - memory is HeapInuse after a forced GC with the cache still alive,
+//     minus the baseline, i.e. the heap spans held by the cache and its data
+//     (including fragmentation of partially used spans); live memory is the
+//     same difference for HeapAlloc (bytes of live objects only).
+func RunBenchmark(newCache func() (caches.Cache, error), w *Workload) (*BenchmarkResult, error) {
+	n := len(w.Keys)
+	lat := make([]time.Duration, n)
 
-func RunBenchmark(cache caches.Cache, workload *Workload) *BenchmarkResult {
+	runtime.GC()
+	var base runtime.MemStats
+	runtime.ReadMemStats(&base)
+
+	cache, err := newCache()
+	if err != nil {
+		return nil, err
+	}
+	defer cache.Close()
+
+	runtime.GC()
+	var before runtime.MemStats
+	runtime.ReadMemStats(&before)
+
 	var hits, misses int64
-	var latencies []time.Duration
-	var mu sync.Mutex
-
-	// Pre-allocate to avoid GC during test
-	latencies = make([]time.Duration, 0, len(workload.Operations))
-
-	// Capture initial memory stats before benchmark
-	runtime.GC()
-	var memBefore runtime.MemStats
-	runtime.ReadMemStats(&memBefore)
-
-	startTime := time.Now()
-
-	var wg sync.WaitGroup
-	// Run sequentially
-	concurrency := 1
-	chunkSize := len(workload.Operations) / concurrency
-
-	for i := 0; i < concurrency; i++ {
-		wg.Add(1)
-		go func(start, end int) {
-			defer wg.Done()
-			for j := start; j < end; j++ {
-				op := workload.Operations[j]
-				// Generate key on the fly to save memory
-				key := GenerateKey(op.KeyID)
-				
-				opStart := time.Now()
-				if _, ok := cache.Get(key); ok {
-					mu.Lock()
-					hits++
-					mu.Unlock()
-				} else {
-					cache.Set(key, workload.SharedValue, int64(len(workload.SharedValue)))
-					mu.Lock()
-					misses++
-					mu.Unlock()
-				}
-				lat := time.Since(opStart)
-				mu.Lock()
-				latencies = append(latencies, lat)
-				mu.Unlock()
-			}
-		}(i*chunkSize, (i+1)*chunkSize)
+	start := time.Now()
+	for i, key := range w.Keys {
+		t0 := time.Now()
+		_, ok := cache.Get(key)
+		lat[i] = time.Since(t0)
+		if ok {
+			hits++
+			continue
+		}
+		misses++
+		// Simulated fetch from the source: a fresh object of the key's size.
+		v := make([]byte, w.Sizes[i])
+		copy(v, w.Source)
+		t1 := time.Now()
+		cache.Set(key, v, int64(len(v)))
+		lat[i] += time.Since(t1)
 	}
-	wg.Wait()
+	duration := time.Since(start)
 
-	duration := time.Since(startTime)
+	var after runtime.MemStats
+	runtime.ReadMemStats(&after)
 
-	// Capture memory stats after benchmark
 	runtime.GC()
-	var memAfter runtime.MemStats
-	runtime.ReadMemStats(&memAfter)
-
-	memoryMB := float64(memAfter.Alloc) / 1024 / 1024
-
-	// Calculate GC and allocation metrics
-	totalOps := len(workload.Operations)
-	allocsPerOp := float64(memAfter.Mallocs-memBefore.Mallocs) / float64(totalOps) / 1000 // in thousands
-	gcPause := float64(memAfter.PauseTotalNs-memBefore.PauseTotalNs) / 1000               // in microseconds
-	gcCycles := float64(memAfter.NumGC-memBefore.NumGC) / duration.Seconds()              // cycles per second
-	allocRate := float64(memAfter.TotalAlloc-memBefore.TotalAlloc) / 1024 / 1024 / duration.Seconds() // MB/s
-
-	// Sort latencies for percentiles
-	sort.Slice(latencies, func(i, j int) bool {
-		return latencies[i] < latencies[j]
-	})
-
-	p50 := percentile(latencies, 0.50)
-	p95 := percentile(latencies, 0.95)
-	p99 := percentile(latencies, 0.99)
-
+	var retained runtime.MemStats
+	runtime.ReadMemStats(&retained)
+	memoryMB := (float64(retained.HeapInuse) - float64(base.HeapInuse)) / (1 << 20)
+	liveMB := (float64(retained.HeapAlloc) - float64(base.HeapAlloc)) / (1 << 20)
 	metrics := cache.Metrics()
+	runtime.KeepAlive(cache)
+
+	cycles := after.NumGC - before.NumGC
+	pause := 0.0
+	if cycles > 0 {
+		pause = float64(after.PauseTotalNs-before.PauseTotalNs) / float64(cycles) / 1000
+	}
+
+	sort.Slice(lat, func(i, j int) bool { return lat[i] < lat[j] })
+	us := func(p float64) float64 {
+		idx := int(float64(n-1) * p)
+		return float64(lat[idx].Nanoseconds()) / 1000
+	}
+
 	return &BenchmarkResult{
 		CacheName:   cache.Name(),
-		Latencies:   latencies,
 		Hits:        hits,
 		Misses:      misses,
 		Evictions:   metrics.EvictionCount,
-		TotalOps:    totalOps,
+		TotalOps:    n,
 		MemoryMB:    memoryMB,
-		P50:         p50,
-		P95:         p95,
-		P99:         p99,
-		AllocsPerOp: allocsPerOp,
-		GCPause:     gcPause,
-		GCCycles:    gcCycles,
-		AllocRate:   allocRate,
+		LiveMB:      liveMB,
+		P50:         us(0.50),
+		P95:         us(0.95),
+		P99:         us(0.99),
+		AllocsPerOp: float64(after.Mallocs-before.Mallocs) / float64(n),
+		GCPause:     pause,
+		GCCycles:    float64(cycles) / duration.Seconds(),
+		AllocRate:   float64(after.TotalAlloc-before.TotalAlloc) / (1 << 20) / duration.Seconds(),
 		Duration:    duration,
-	}
-}
-
-func CalculateThroughput(result *BenchmarkResult, duration time.Duration) float64 {
-	return float64(result.TotalOps) / duration.Seconds()
-}
-
-func Percentile(latencies []time.Duration, p float64) time.Duration {
-	if len(latencies) == 0 {
-		return 0
-	}
-	index := int(float64(len(latencies)-1) * p)
-	if index < 0 {
-		index = 0
-	}
-	if index >= len(latencies) {
-		index = len(latencies) - 1
-	}
-	return latencies[index]
+	}, nil
 }

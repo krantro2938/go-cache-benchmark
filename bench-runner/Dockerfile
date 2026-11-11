@@ -3,9 +3,9 @@ WORKDIR /app
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -o bench-runner .
 
-FROM alpine:latest
+FROM alpine:3.20
 RUN apk --no-cache add ca-certificates
-WORKDIR /app  # ← critical!
+WORKDIR /app
 COPY --from=builder /app/bench-runner .
-# No need to copy results — it's a volume
+# Results are written to the /app/results volume.
 CMD ["./bench-runner"]

@@ -7,13 +7,24 @@ import "cache-bench/internal/gcaware"
 // Get records the access (via Lookup) and Set admits under the policy.
 type GCAwareCache struct {
 	cache *gcaware.Cache
+	name  string
 }
 
 // NewGCAwareCache builds a GC-aware cache with a byte budget of maxBytes,
 // using the paper's default parameters (λ=0.7, k_h=5, k_s=5, adaptive window).
 func NewGCAwareCache(maxBytes int64) (Cache, error) {
 	c := gcaware.New(gcaware.DefaultConfig(uintptr(maxBytes)))
-	return &GCAwareCache{cache: c}, nil
+	return &GCAwareCache{cache: c, name: "GCAware"}, nil
+}
+
+// NewAdaptiveTinyLFU builds the baseline used in the paper: the same
+// implementation (Count-Min Sketch, adaptive window, sampled victims, byte
+// budget) with λ = 1, i.e. β = 0, so the GC-aware cost term is removed from
+// the value function and admission depends on frequency only.
+func NewAdaptiveTinyLFU(maxBytes int64) (Cache, error) {
+	cfg := gcaware.DefaultConfig(uintptr(maxBytes))
+	cfg.Lambda = 1
+	return &GCAwareCache{cache: gcaware.New(cfg), name: "Adaptive_TinyLFU"}, nil
 }
 
 // NewGCAwareCacheLambda is like NewGCAwareCache but overrides λ (the
@@ -22,7 +33,7 @@ func NewGCAwareCacheLambda(maxBytes int64, lambda float64) (Cache, error) {
 	cfg := gcaware.DefaultConfig(uintptr(maxBytes))
 	cfg.Lambda = lambda
 	c := gcaware.New(cfg)
-	return &GCAwareCache{cache: c}, nil
+	return &GCAwareCache{cache: c, name: "GCAware"}, nil
 }
 
 // Set admits value under the GC-aware admission policy. The cost argument is
@@ -50,4 +61,4 @@ func (g *GCAwareCache) Metrics() Metrics {
 	}
 }
 
-func (g *GCAwareCache) Name() string { return "GCAware" }
+func (g *GCAwareCache) Name() string { return g.name }
