@@ -14,8 +14,8 @@ import os
 import statistics
 import sys
 
-METRICS = ["hit_ratio", "evictions", "ops_per_sec", "p50_us", "p95_us", "p99_us",
-           "memory_mb", "live_mb", "alloc_rate_mb_per_sec", "allocs_per_op",
+METRICS = ["hit_ratio", "byte_hit_ratio", "evictions", "ops_per_sec", "p50_us", "p95_us", "p99_us",
+           "memory_mb", "live_mb", "alloc_rate_mb_per_sec", "alloc_bytes_per_op", "allocs_per_op",
            "gc_cycles_per_sec", "gc_pause_us"]
 
 # two-sided 95 % Student t quantiles for df = 1..30 (df > 30 -> 1.96)

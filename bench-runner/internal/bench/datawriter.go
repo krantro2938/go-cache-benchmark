@@ -14,9 +14,9 @@ type DataWriter struct {
 }
 
 var header = []string{
-	"seed", "series", "config_id", "cache", "ops", "hits", "misses", "hit_ratio",
+	"seed", "series", "config_id", "cache", "ops", "hits", "misses", "hit_ratio", "byte_hit_ratio",
 	"evictions", "ops_per_sec", "p50_us", "p95_us", "p99_us", "memory_mb", "live_mb",
-	"alloc_rate_mb_per_sec", "allocs_per_op", "gc_cycles_per_sec", "gc_pause_us",
+	"alloc_rate_mb_per_sec", "alloc_bytes_per_op", "allocs_per_op", "gc_cycles_per_sec", "gc_pause_us",
 	"duration_s",
 }
 
@@ -43,13 +43,17 @@ func (d *DataWriter) Write(seed int64, series, configID string, r *BenchmarkResu
 	if r.Hits+r.Misses > 0 {
 		hr = float64(r.Hits) / float64(r.Hits+r.Misses)
 	}
+	bhr := 0.0
+	if r.ReqBytes > 0 {
+		bhr = float64(r.HitBytes) / float64(r.ReqBytes)
+	}
 	row := []string{
 		strconv.FormatInt(seed, 10), series, configID, r.CacheName,
 		strconv.Itoa(r.TotalOps), strconv.FormatInt(r.Hits, 10), strconv.FormatInt(r.Misses, 10),
-		ff(hr, 6), strconv.FormatInt(r.Evictions, 10),
+		ff(hr, 6), ff(bhr, 6), strconv.FormatInt(r.Evictions, 10),
 		ff(float64(r.TotalOps)/r.Duration.Seconds(), 1),
 		ff(r.P50, 3), ff(r.P95, 3), ff(r.P99, 3), ff(r.MemoryMB, 3), ff(r.LiveMB, 3),
-		ff(r.AllocRate, 3), ff(r.AllocsPerOp, 4), ff(r.GCCycles, 4), ff(r.GCPause, 3),
+		ff(r.AllocRate, 3), ff(r.AllocPerOp, 1), ff(r.AllocsPerOp, 4), ff(r.GCCycles, 4), ff(r.GCPause, 3),
 		ff(r.Duration.Seconds(), 3),
 	}
 	if err := d.w.Write(row); err != nil {

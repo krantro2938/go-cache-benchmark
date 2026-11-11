@@ -13,6 +13,8 @@ type BenchmarkResult struct {
 	CacheName   string
 	Hits        int64
 	Misses      int64
+	HitBytes    int64 // bytes served from the cache
+	ReqBytes    int64 // bytes requested in total
 	Evictions   int64
 	TotalOps    int
 	MemoryMB    float64 // heap held by the cache: HeapInuse delta (incl. span fragmentation), MB
@@ -23,6 +25,7 @@ type BenchmarkResult struct {
 	GCPause     float64 // mean stop-the-world pause per GC cycle, µs
 	GCCycles    float64 // GC cycles per second
 	AllocRate   float64 // MB allocated per second
+	AllocPerOp  float64 // bytes allocated per operation (independent of speed)
 	Duration    time.Duration
 }
 
@@ -59,14 +62,16 @@ func RunBenchmark(newCache func() (caches.Cache, error), w *Workload) (*Benchmar
 	var before runtime.MemStats
 	runtime.ReadMemStats(&before)
 
-	var hits, misses int64
+	var hits, misses, hitBytes, reqBytes int64
 	start := time.Now()
 	for i, key := range w.Keys {
 		t0 := time.Now()
 		_, ok := cache.Get(key)
 		lat[i] = time.Since(t0)
+		reqBytes += int64(w.Sizes[i])
 		if ok {
 			hits++
+			hitBytes += int64(w.Sizes[i])
 			continue
 		}
 		misses++
@@ -106,6 +111,8 @@ func RunBenchmark(newCache func() (caches.Cache, error), w *Workload) (*Benchmar
 		CacheName:   cache.Name(),
 		Hits:        hits,
 		Misses:      misses,
+		HitBytes:    hitBytes,
+		ReqBytes:    reqBytes,
 		Evictions:   metrics.EvictionCount,
 		TotalOps:    n,
 		MemoryMB:    memoryMB,
@@ -117,6 +124,7 @@ func RunBenchmark(newCache func() (caches.Cache, error), w *Workload) (*Benchmar
 		GCPause:     pause,
 		GCCycles:    float64(cycles) / duration.Seconds(),
 		AllocRate:   float64(after.TotalAlloc-before.TotalAlloc) / (1 << 20) / duration.Seconds(),
+		AllocPerOp:  float64(after.TotalAlloc-before.TotalAlloc) / float64(n),
 		Duration:    duration,
 	}, nil
 }
