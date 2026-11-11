@@ -20,10 +20,13 @@ type CountMinSketch struct {
 	seeds   []uint32
 	adds    uint64 // total increments since last aging
 	ageEvry uint64 // halve counters after this many increments
+	resets  uint64 // number of agings performed so far
 }
 
 // NewCountMinSketch builds a sketch sized for the given error bounds.
 // epsilon is the relative additive error and delta the failure probability.
+// ageEvery is the number of increments between agings; 0 selects the TinyLFU
+// default of 10 increments per counter of one row (10 * width).
 func NewCountMinSketch(epsilon, delta float64, ageEvery uint64) *CountMinSketch {
 	width := int(math.Ceil(math.E / epsilon))
 	depth := int(math.Ceil(math.Log(1.0 / delta)))
@@ -41,6 +44,9 @@ func NewCountMinSketch(epsilon, delta float64, ageEvery uint64) *CountMinSketch 
 	for i := range seeds {
 		// Distinct odd seeds for independent hash functions.
 		seeds[i] = uint32(i)*0x9E3779B1 + 1
+	}
+	if ageEvery == 0 {
+		ageEvery = 10 * uint64(width)
 	}
 	return &CountMinSketch{
 		depth:   depth,
@@ -104,4 +110,11 @@ func (c *CountMinSketch) age() {
 		}
 	}
 	c.adds = 0
+	c.resets++
 }
+
+// Resets reports how many times the sketch has been aged.
+func (c *CountMinSketch) Resets() uint64 { return c.resets }
+
+// AgeEvery reports the aging period in increments.
+func (c *CountMinSketch) AgeEvery() uint64 { return c.ageEvry }

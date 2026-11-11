@@ -1,7 +1,11 @@
-version: "3.8"
-
 services:
     bench-runner:
         build: ./bench-runner
+        environment:
+            - RUN_SEED
+            - BENCH_SCALE
+            - SERIES
+            - GOGC
+            - GOMAXPROCS
         volumes:
             - ./results:/app/results

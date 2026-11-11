@@ -1,282 +1,221 @@
+// Command bench-runner reproduces the experiments of the paper
+// "Адаптивное локальное кэширование в микросервисных системах с учетом
+// особенностей сборки мусора".
+//
+// One invocation performs one run of every experiment series and writes
+// RESULTS_DIR/results.csv (one row per configuration and cache) and
+// RESULTS_DIR/env.json (runtime and machine description).
+//
+// Environment variables:
+//
+//	RUN_SEED     workload seed (default 1); run-benchmarks.sh uses the run number
+//	RESULTS_DIR  output directory (default /app/results)
+//	BENCH_SCALE  multiplies key-space sizes, request counts and cache budgets
+//	             (default 1; e.g. 0.05 for a quick smoke test)
+//	SERIES       comma-separated subset of: size,value,skew,mixed,lambda
+//	             (default: all)
 package main
 
 import (
-	"cache-bench/internal/bench"
-	"cache-bench/internal/caches"
-	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"log"
-	"math/rand"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
+
+	"cache-bench/internal/bench"
+	"cache-bench/internal/caches"
 )
 
-const BaseValueSize = 1024
+var (
+	seed    = envInt("RUN_SEED", 1)
+	scale   = envFloat("BENCH_SCALE", 1)
+	outDir  = envStr("RESULTS_DIR", "/app/results")
+	enabled = map[string]bool{}
+)
 
 func main() {
-	w, err := bench.NewDataWriter()
+	for _, s := range strings.Split(envStr("SERIES", "size,value,skew,mixed,lambda"), ",") {
+		enabled[strings.TrimSpace(s)] = true
+	}
+	var err error
+	writer, err = bench.NewDataWriter(outDir)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer w.Flush()
+	defer writer.Close()
+	writeEnv()
 
-	// === 1. Vary CACHE SIZE (for hit ratio vs memory graph) ===
-	cacheSizes := []struct {
-		id   string
-		size int64
-	}{
-		{"size_64mb", 64 << 20},
-		{"size_128mb", 128 << 20},
-		{"size_256mb", 256 << 20},
-		{"size_512mb", 512 << 20},
-		{"size_1gb", 1024 << 20},
-	}
-
-	for _, cs := range cacheSizes {
-		fmt.Printf("=== Running config: %s ===\n", cs.id)
-		workload := bench.GenerateWorkload(bench.WorkloadConfig{
-			Seed:         42,
-			KeySpaceSize: 5_000_000,   // 5M keys
-			TotalOps:     10_000_000,  // 10M ops
-			ValueSize:    BaseValueSize,
-			Skew:         0.0, // Uniform distribution to force evictions
-		})
-
-		runBenchmarks(cs.id, cs.size, workload, w)
-	}
-
-	// === 2. Vary VALUE SIZE (for throughput vs object size) ===
-	valueSizes := []struct {
-		id   string
-		size int
-	}{
-		{"val_256b", 256},
-		{"val_1kb", 1024},
-		{"val_4kb", 4096},
-		{"val_16kb", 16384},
-		{"val_64kb", 65536},
-	}
-
-	for _, vs := range valueSizes {
-		fmt.Printf("=== Running config: %s ===\n", vs.id)
-		workload := bench.GenerateWorkload(bench.WorkloadConfig{
-			Seed:         42,
-			KeySpaceSize: 500_000,     // 500k keys
-			TotalOps:     2_000_000,   // 2M ops
-			ValueSize:    vs.size,
-			Skew:         0.95,
-		})
-
-		// Use fixed 512MB cache for this test
-		runBenchmarks(vs.id, 512<<20, workload, w)
-	}
-
-	// === 3. Vary SKEW (for adaptivity analysis) ===
-	skews := []struct {
-		id   string
-		skew float64
-	}{
-		{"skew_0.80", 0.80},
-		{"skew_0.90", 0.90},
-		{"skew_0.95", 0.95},
-		{"skew_0.99", 0.99},
-	}
-
-	for _, s := range skews {
-		fmt.Printf("=== Running config: %s ===\n", s.id)
-		workload := bench.GenerateWorkload(bench.WorkloadConfig{
-			Seed:         42,
-			KeySpaceSize: 1_000_000,   // 1M keys
-			TotalOps:     5_000_000,   // 5M ops
-			ValueSize:    BaseValueSize,
-			Skew:         s.skew,
-		})
-
-		runBenchmarks(s.id, 256<<20, workload, w)
-	}
-
-	// === 4. Lambda sweep (GCAware only) ===
-	// Mixed object sizes + a tight budget so the GC-aware cost term is actually
-	// non-constant and eviction is forced (the only conditions under which λ can
-	// influence which objects are admitted/evicted).
-	runLambdaSweep()
-}
-
-// runLambdaSweep benchmarks GCAware across a range of λ values over a SINGLE
-// fixed config designed to exercise the cost term:
-//   - MIXED object sizes (256B/1KB/16KB/64KB, weighted) so C(x) varies per object
-//   - skew ~0.9 and a tight 16MB budget so eviction is heavy (evictions > 0)
-//
-// It writes lambda,hit_ratio,memory_mb,alloc_rate_mb_per_sec,evictions to
-// /app/results/lambda_sweep.csv and prints the same table to stdout. The
-// per-op measurement (GC + MemStats before/after, alloc rate) mirrors
-// bench.RunBenchmark; we cannot use RunBenchmark directly because it Sets a
-// single fixed-size SharedValue for every key.
-func runLambdaSweep() {
-	const (
-		cacheSizeBytes = 16 << 20 // 16MB: tight enough to force heavy eviction
-		keySpaceSize   = 200_000
-		totalOps       = 3_000_000
-		skew           = 0.9
-	)
-	fmt.Printf("=== Running lambda sweep (GCAware, MIXED sizes, %dMB, skew %.2f) ===\n",
-		cacheSizeBytes>>20, skew)
-
-	// Reuse the standard generator only for the keyID ACCESS stream.
-	workload := bench.GenerateWorkload(bench.WorkloadConfig{
-		Seed:         42,
-		KeySpaceSize: keySpaceSize,
-		TotalOps:     totalOps,
-		ValueSize:    1, // SharedValue is unused here; keep it tiny
-		Skew:         skew,
-	})
-
-	// Weighted mix of object sizes. Each KEY is assigned ONE fixed size, so a
-	// given object's cost C(x) is stable across its lifetime and objects differ
-	// in cost (which is what λ trades off against frequency).
-	sizeClasses := []int{256, 1024, 16384, 65536}
-	weights := []int{70, 20, 7, 3} // percent; sum = 100
-	cum := make([]int, len(weights))
-	acc := 0
-	for i, wv := range weights {
-		acc += wv
-		cum[i] = acc
-	}
-	totalW := acc
-
-	// Shared value buffer per size class (avoids per-op allocation noise).
-	rng := rand.New(rand.NewSource(12345))
-	buffers := make(map[int][]byte, len(sizeClasses))
-	for _, s := range sizeClasses {
-		b := make([]byte, s)
-		rng.Read(b)
-		buffers[s] = b
-	}
-	// Deterministic per-key size assignment.
-	keySize := make([]int, keySpaceSize)
-	for k := 0; k < keySpaceSize; k++ {
-		r := rng.Intn(totalW)
-		for i, c := range cum {
-			if r < c {
-				keySize[k] = sizeClasses[i]
-				break
-			}
+	// 1. Cache budget: uniform keys, 1 KB objects (hit ratio vs. budget).
+	if enabled["size"] {
+		for _, mb := range []int64{64, 128, 256, 512, 1024} {
+			cfg := bench.WorkloadConfig{KeySpaceSize: sc(5_000_000), TotalOps: sc(10_000_000), ValueSize: 1024, Skew: 0}
+			run("size", fmt.Sprintf("size_%dmb", mb), cfg, scb(mb<<20), allCaches)
 		}
 	}
 
-	os.MkdirAll("/app/results", 0755)
-	f, err := os.Create("/app/results/lambda_sweep.csv")
-	if err != nil {
-		log.Printf("lambda sweep: cannot create csv: %v", err)
-		return
+	// 2. Object size: Zipf s = 0.95, 512 MB budget.
+	if enabled["value"] {
+		for _, v := range []struct {
+			id   string
+			size int
+		}{{"val_256b", 256}, {"val_1kb", 1024}, {"val_4kb", 4096}, {"val_16kb", 16384}, {"val_64kb", 65536}} {
+			cfg := bench.WorkloadConfig{KeySpaceSize: sc(500_000), TotalOps: sc(2_000_000), ValueSize: v.size, Skew: 0.95}
+			run("value", v.id, cfg, scb(512<<20), allCaches)
+		}
 	}
-	defer f.Close()
-	cw := csv.NewWriter(f)
-	defer cw.Flush()
-	cw.Write([]string{"lambda", "hit_ratio", "memory_mb", "alloc_rate_mb_per_sec", "evictions"})
 
-	fmt.Printf("%-8s %-10s %-12s %-22s %-12s\n", "lambda", "hit_ratio", "memory_mb", "alloc_rate_mb_per_s", "evictions")
-	lambdas := []float64{0.0, 0.3, 0.5, 0.7, 0.9, 1.0}
-	for _, lambda := range lambdas {
-		c, err := caches.NewGCAwareCacheLambda(cacheSizeBytes, lambda)
+	// 3. Skew: 1 KB objects, 256 MB budget.
+	if enabled["skew"] {
+		for _, s := range []float64{0.80, 0.90, 0.95, 0.99} {
+			cfg := bench.WorkloadConfig{KeySpaceSize: sc(1_000_000), TotalOps: sc(5_000_000), ValueSize: 1024, Skew: s}
+			run("skew", fmt.Sprintf("skew_%.2f", s), cfg, scb(256<<20), allCaches)
+		}
+	}
+
+	// 4. Heterogeneous object sizes, tight budget: the case the GC-aware
+	// cost term is designed for.
+	if enabled["mixed"] {
+		run("mixed", "mixed_16mb", mixedConfig(), scb(16<<20), allCaches)
+	}
+
+	// 5. λ sweep of the proposed method on the heterogeneous workload.
+	if enabled["lambda"] {
+		for _, l := range []float64{0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0} {
+			l := l
+			run("lambda", fmt.Sprintf("lambda_%.1f", l), mixedConfig(), scb(16<<20),
+				func(budget int64, wl *bench.Workload) []func() (caches.Cache, error) {
+					return []func() (caches.Cache, error){
+						func() (caches.Cache, error) { return caches.NewGCAwareCacheLambda(budget, l) },
+					}
+				})
+		}
+	}
+}
+
+func mixedConfig() bench.WorkloadConfig {
+	return bench.WorkloadConfig{
+		KeySpaceSize: sc(200_000), TotalOps: sc(3_000_000), Skew: 0.9,
+		SizeMix: []int{256, 1024, 16384, 65536}, SizeWeights: []int{70, 20, 7, 3},
+	}
+}
+
+// allCaches lists the compared systems. Go-Cache is not included: it has no
+// size limit, so it cannot be compared under an equal memory budget (with
+// realistic, separately allocated objects it simply grows with the key space).
+func allCaches(budget int64, wl *bench.Workload) []func() (caches.Cache, error) {
+	return []func() (caches.Cache, error){
+		func() (caches.Cache, error) { return caches.NewRistrettoCache(budget, wl.MeanSize) },
+		func() (caches.Cache, error) { return caches.NewAdaptiveTinyLFU(budget) },
+		func() (caches.Cache, error) { return caches.NewGCAwareCache(budget) },
+		func() (caches.Cache, error) { return caches.NewBigCache(budget, wl.MeanSize, wl.MaxSize) },
+	}
+}
+
+func run(series, id string, cfg bench.WorkloadConfig, budget int64,
+	list func(int64, *bench.Workload) []func() (caches.Cache, error)) {
+	cfg.Seed = int64(seed)
+	if cfg.ValueSize == 0 && len(cfg.SizeMix) == 0 {
+		cfg.ValueSize = 1024
+	}
+	fmt.Printf("=== %s / %s (seed %d) ===\n", series, id, seed)
+	wl := bench.GenerateWorkload(cfg)
+	for _, mk := range list(budget, wl) {
+		res, err := bench.RunBenchmark(mk, wl)
 		if err != nil {
-			log.Printf("lambda sweep: cannot build cache for λ=%.1f: %v", lambda, err)
+			log.Printf("  %s: %v", id, err)
 			continue
 		}
-
-		runtime.GC()
-		var memBefore runtime.MemStats
-		runtime.ReadMemStats(&memBefore)
-
-		var hits, misses int64
-		start := time.Now()
-		for _, op := range workload.Operations {
-			key := bench.GenerateKey(op.KeyID)
-			if _, ok := c.Get(key); ok {
-				hits++
-			} else {
-				v := buffers[keySize[op.KeyID]]
-				c.Set(key, v, int64(len(v)))
-				misses++
-			}
+		fmt.Printf("  %-18s hit=%.4f ops/s=%.0f p99=%.2fus mem=%.1fMB alloc=%.1fMB/s pause=%.1fus\n",
+			res.CacheName, float64(res.Hits)/float64(res.TotalOps),
+			float64(res.TotalOps)/res.Duration.Seconds(), res.P99, res.MemoryMB, res.AllocRate, res.GCPause)
+		if err := writer.Write(int64(seed), series, id, res); err != nil {
+			log.Fatal(err)
 		}
-		duration := time.Since(start)
-
-		runtime.GC()
-		var memAfter runtime.MemStats
-		runtime.ReadMemStats(&memAfter)
-
-		hitRatio := float64(hits) / float64(hits+misses)
-		memoryMB := float64(memAfter.Alloc) / 1024 / 1024
-		allocRate := float64(memAfter.TotalAlloc-memBefore.TotalAlloc) / 1024 / 1024 / duration.Seconds()
-		evictions := c.Metrics().EvictionCount
-
-		cw.Write([]string{
-			strconv.FormatFloat(lambda, 'f', 1, 64),
-			strconv.FormatFloat(hitRatio, 'f', 4, 64),
-			strconv.FormatFloat(memoryMB, 'f', 2, 64),
-			strconv.FormatFloat(allocRate, 'f', 2, 64),
-			strconv.FormatInt(evictions, 10),
-		})
-		cw.Flush()
-
-		fmt.Printf("%-8.1f %-10.4f %-12.2f %-22.2f %-12d\n",
-			lambda, hitRatio, memoryMB, allocRate, evictions)
-
-		c.Close()
 		runtime.GC()
 	}
 }
 
-func runBenchmarks(configID string, cacheSizeBytes int64, workload *bench.Workload, w *bench.DataWriter) {
-	// Helper to run a single cache benchmark
-	runCache := func(c caches.Cache) {
-		// Ensure we clean up this cache before moving to the next one
-		defer runtime.GC()
-		defer c.Close()
+var writer *bench.DataWriter
 
-		fmt.Printf("  → %s\n", c.Name())
-
-		result := bench.RunBenchmark(c, workload)
-
-		hitRatio := float64(result.Hits) / float64(result.Hits+result.Misses)
-		tps := float64(result.TotalOps) / result.Duration.Seconds()
-		p50 := bench.Percentile(result.Latencies, 0.50).Microseconds()
-		p95 := bench.Percentile(result.Latencies, 0.95).Microseconds()
-		p99 := bench.Percentile(result.Latencies, 0.99).Microseconds()
-
-		w.WriteLatency(configID, c.Name(), float64(p50), float64(p95), float64(p99))
-		w.WriteHitRatio(configID, c.Name(), hitRatio)
-		w.WriteThroughput(configID, c.Name(), tps)
-		w.WriteEvictions(configID, c.Name(), result.Evictions)
-		w.WriteMemory(configID, c.Name(), result.MemoryMB)
-		w.WriteGC(configID, c.Name(), result.AllocsPerOp, result.GCPause, result.GCCycles, result.AllocRate)
+func writeEnv() {
+	env := map[string]any{
+		"time_utc":        time.Now().UTC().Format(time.RFC3339),
+		"go_version":      runtime.Version(),
+		"goos":            runtime.GOOS,
+		"goarch":          runtime.GOARCH,
+		"num_cpu":         runtime.NumCPU(),
+		"gomaxprocs":      runtime.GOMAXPROCS(0),
+		"GOGC":            os.Getenv("GOGC"),
+		"GOMEMLIMIT":      os.Getenv("GOMEMLIMIT"),
+		"seed":            seed,
+		"scale":           scale,
+		"cpu_model":       firstMatch("/proc/cpuinfo", "model name"),
+		"mem_total":       firstMatch("/proc/meminfo", "MemTotal"),
+		"kernel":          readTrim("/proc/sys/kernel/osrelease"),
+		"workload_series": envStr("SERIES", "size,value,skew,mixed,lambda"),
 	}
+	b, _ := json.MarshalIndent(env, "", "  ")
+	_ = os.WriteFile(filepath.Join(outDir, "env.json"), b, 0o644)
+}
 
-	// Ristretto
-	if r, err := caches.NewRistrettoCache(cacheSizeBytes); err == nil {
-		runCache(r)
+func firstMatch(path, prefix string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
 	}
-
-	// Otter
-	if o, err := caches.NewOtterCache(int(cacheSizeBytes)); err == nil { // Otter ignores size arg
-		runCache(o)
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.HasPrefix(line, prefix) {
+			if i := strings.Index(line, ":"); i >= 0 {
+				return strings.TrimSpace(line[i+1:])
+			}
+		}
 	}
+	return ""
+}
 
-	// BigCache
-	if b, err := caches.NewBigCache(cacheSizeBytes); err == nil {
-		runCache(b)
+func readTrim(path string) string {
+	b, _ := os.ReadFile(path)
+	return strings.TrimSpace(string(b))
+}
+
+func sc(n int) int {
+	v := int(float64(n) * scale)
+	if v < 1000 {
+		v = 1000
 	}
+	return v
+}
 
-	// GoCache (approximate size)
-	maxItems := int(cacheSizeBytes / int64(BaseValueSize))
-	gc := caches.NewGoCache(maxItems)
-	runCache(gc)
-
-	// GCAware (Adaptive TinyLFU admission + GC-aware cost function)
-	if g, err := caches.NewGCAwareCache(cacheSizeBytes); err == nil {
-		runCache(g)
+func scb(b int64) int64 {
+	v := int64(float64(b) * scale)
+	if v < 1<<20 {
+		v = 1 << 20
 	}
+	return v
+}
+
+func envStr(k, def string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return def
+}
+
+func envInt(k string, def int) int {
+	if v, err := strconv.Atoi(os.Getenv(k)); err == nil {
+		return v
+	}
+	return def
+}
+
+func envFloat(k string, def float64) float64 {
+	if v, err := strconv.ParseFloat(os.Getenv(k), 64); err == nil {
+		return v
+	}
+	return def
 }

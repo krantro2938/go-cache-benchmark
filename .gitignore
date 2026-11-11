@@ -1,2 +1,3 @@
 # Reference package source unzipped for vendoring (separate module, not part of the build)
 /gcaware-cache/
+/results/

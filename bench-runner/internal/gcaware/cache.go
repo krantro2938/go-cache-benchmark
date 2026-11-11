@@ -14,7 +14,9 @@ type Config struct {
 	// (sum of C(x) over resident objects), not an object count.
 	MaxBytes uintptr
 	// Lambda in [0,1] balances cache utility (frequency) against allocation
-	// cost. Alpha = K*Lambda, Beta = K*(1-Lambda).
+	// cost. Alpha = K*Lambda, Beta = K*(1-Lambda). Lambda is used as given
+	// (0 is a valid value); start from DefaultConfig to get λ = 0.7.
+	// Lambda = 1 disables the cost term (frequency-only Adaptive TinyLFU).
 	Lambda float64
 	// K scales the value function.
 	K float64
@@ -24,7 +26,8 @@ type Config struct {
 	// CMSEpsilon / CMSDelta size the Count-Min Sketch (k_h = ceil(ln(1/delta))).
 	CMSEpsilon float64
 	CMSDelta   float64
-	// CMSAgeEvery halves the sketch after this many increments.
+	// CMSAgeEvery halves the sketch after this many increments
+	// (0 = 10 * sketch width, the TinyLFU default).
 	CMSAgeEvery uint64
 	// AdaptInterval: AdaptWindow runs once every AdaptInterval operations
 	// (not after every admission, to avoid oscillation).
@@ -47,7 +50,7 @@ func DefaultConfig(maxBytes uintptr) Config {
 		SampleSize:     5,     // k_s
 		CMSEpsilon:     0.001, // width ~ 2719 counters/row
 		CMSDelta:       0.01,  // depth = 5 => k_h = 5
-		CMSAgeEvery:    0,     // set from workload size by the caller if desired
+		CMSAgeEvery:    0,     // 0 = 10 * sketch width (TinyLFU default)
 		AdaptInterval:  1000,
 		WindowMinFrac:  0.01,
 		WindowMaxFrac:  0.40,
@@ -81,8 +84,11 @@ type Cache struct {
 	keyIdx  map[string]int
 	curByte uintptr
 
-	cms     *CountMinSketch
-	maxFreq uint32 // running max for frequency normalisation
+	cms       *CountMinSketch
+	maxFreq   uint32 // running max for frequency normalisation
+	cmsResets uint64 // sketch agings already reflected in maxFreq
+
+	victimBuf []*entry // scratch space for two-stage admission
 
 	seq         uint64
 	ops         uint64
@@ -99,8 +105,8 @@ type Cache struct {
 // New builds a cache from cfg, applying defaults for zero fields.
 func New(cfg Config) *Cache {
 	d := DefaultConfig(cfg.MaxBytes)
-	if cfg.Lambda == 0 {
-		cfg.Lambda = d.Lambda
+	if cfg.Lambda < 0 || cfg.Lambda > 1 {
+		panic("gcaware: Lambda must be in [0, 1]")
 	}
 	if cfg.K == 0 {
 		cfg.K = d.K
@@ -157,6 +163,15 @@ func (c *Cache) fingerprint(key string) uint64 {
 // normFreq returns f(x) in [0,1]: the estimated frequency divided by the
 // largest frequency observed so far.
 func (c *Cache) normFreq(fp uint64) float64 {
+	// The sketch halves its counters periodically; halve the running maximum
+	// accordingly so that normalised frequencies stay in [0, 1] and comparable.
+	for c.cmsResets < c.cms.Resets() {
+		c.maxFreq /= 2
+		if c.maxFreq == 0 {
+			c.maxFreq = 1
+		}
+		c.cmsResets++
+	}
 	f := c.cms.Estimate(fp)
 	if f > c.maxFreq {
 		c.maxFreq = f
@@ -236,12 +251,24 @@ func (c *Cache) access(key string) ([]byte, bool) {
 	return nil, false
 }
 
-// admit applies the selective admission policy from the paper.
+// admit applies the selective admission policy from the paper (Algorithm 1).
+//
+// If the new object does not fit, admission is two-stage: first a set E of
+// victims whose total cost covers the deficit is selected, and every victim
+// is checked against the new object (V(x_new) > V(x_v)); only if all checks
+// pass are the victims removed and the new object inserted. If any candidate
+// is at least as valuable as the new object, the insertion is rejected and the
+// cache is left unchanged.
 func (c *Cache) admit(key string, fp uint64, data []byte) {
 	s := uintptr(len(data))
 	cNew := cost(s)
 	if cNew > c.cfg.MaxBytes {
 		return // object alone exceeds the budget; never admit
+	}
+
+	// Updating a resident key replaces its value in place.
+	if _, ok := c.data[key]; ok {
+		c.remove(key)
 	}
 
 	// If there is room, insert directly.
@@ -250,18 +277,27 @@ func (c *Cache) admit(key string, fp uint64, data []byte) {
 		return
 	}
 
-	// Otherwise compare against a sampled victim and evict to make room.
+	// Stage 1: select and check victims without modifying the cache.
+	need := c.curByte + cNew - c.cfg.MaxBytes
 	vNew := c.value(fp, cNew)
-	for c.curByte+cNew > c.cfg.MaxBytes {
-		victim := c.selectVictim()
+	chosen := c.victimBuf[:0] // reused buffer: no allocation per admission
+	var freed uintptr
+	for freed < need {
+		victim := c.selectVictim(chosen)
 		if victim == nil {
-			return
+			return // nothing left to evict; cache unchanged
 		}
-		vVictim := c.value(victim.fp, victim.c)
-		if vNew <= vVictim {
-			return // incoming object is not worth more than the victim
+		if vNew <= c.value(victim.fp, victim.c) {
+			return // rejected; cache unchanged
 		}
-		c.remove(victim.key)
+		chosen = append(chosen, victim)
+		freed += victim.c
+	}
+	c.victimBuf = chosen[:0]
+
+	// Stage 2: commit.
+	for _, v := range chosen {
+		c.remove(v.key)
 		c.evictions++
 	}
 	c.insert(key, fp, data, cNew)
@@ -271,57 +307,78 @@ func (c *Cache) curByteAfterInsert(cNew uintptr) bool {
 	return c.curByte+cNew <= c.cfg.MaxBytes
 }
 
-// selectVictim samples k_s resident entries and returns the one with the
-// lowest value V, skipping objects still inside the protected window region.
-func (c *Cache) selectVictim() *entry {
+// selectVictim samples k_s resident entries outside `exclude` and returns the
+// one with the lowest value V, skipping objects inside the protected window.
+// If every sampled entry is protected, the lowest-valued sampled entry is
+// returned so that the cache can still make progress.
+func (c *Cache) selectVictim(exclude []*entry) *entry {
 	n := len(c.keys)
-	if n == 0 {
+	if n == 0 || len(exclude) >= n {
 		return nil
 	}
 	windowEdge := c.windowEdge()
-	var victim *entry
-	var vMin float64
-	tries := c.cfg.SampleSize
-	for i := 0; i < tries; i++ {
+	var victim, fallback *entry
+	var vMin, fMin float64
+	for i := 0; i < c.cfg.SampleSize; i++ {
 		e := c.data[c.keys[c.rng.Intn(n)]]
 		if e == nil {
 			continue
 		}
-		// Protect recently admitted objects (the adaptive window).
-		if e.seq >= windowEdge {
+		if contains(exclude, e) {
 			continue
 		}
 		v := c.value(e.fp, e.c)
+		if fallback == nil || v < fMin {
+			fallback, fMin = e, v
+		}
+		// Protect recently admitted objects (the adaptive window).
+		if e.seq > windowEdge {
+			continue
+		}
 		if victim == nil || v < vMin {
 			victim, vMin = e, v
 		}
 	}
-	if victim == nil {
-		// All sampled entries were protected; fall back to any sample so the
-		// cache can still make progress under a large window.
-		e := c.data[c.keys[c.rng.Intn(n)]]
-		return e
+	if victim != nil {
+		return victim
 	}
-	return victim
+	if fallback != nil {
+		return fallback
+	}
+	// All samples hit excluded keys: scan for any non-excluded entry.
+	for _, k := range c.keys {
+		if e := c.data[k]; !contains(exclude, e) {
+			return e
+		}
+	}
+	return nil
 }
 
-// windowEdge returns the smallest admission sequence number that is still
-// considered "recent" given the current window size in bytes.
+func contains(set []*entry, e *entry) bool {
+	for _, x := range set {
+		if x == e {
+			return true
+		}
+	}
+	return false
+}
+
+// windowEdge returns the largest admission sequence number that is NOT
+// protected: the most recently admitted objects, whose share of the resident
+// objects equals windowBytes/curByte, have seq > windowEdge.
 func (c *Cache) windowEdge() uint64 {
 	if c.curByte == 0 {
-		return 0
+		return c.seq
 	}
-	// Approximate: protect the most recent fraction windowBytes/curByte of
-	// the admission sequence space.
 	frac := float64(c.windowBytes) / float64(c.curByte)
 	if frac > 1 {
 		frac = 1
 	}
-	span := float64(c.seq) * frac
-	if float64(c.seq) < span {
+	protected := uint64(float64(len(c.keys)) * frac)
+	if protected >= c.seq {
 		return 0
 	}
-	return c.seq - uint64(span)
+	return c.seq - protected
 }
 
 func (c *Cache) insert(key string, fp uint64, data []byte, cNew uintptr) {
