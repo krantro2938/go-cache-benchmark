@@ -17,11 +17,14 @@ func TestBudgetNeverExceeded(t *testing.T) {
 			t.Fatalf("budget exceeded: %d > %d", c.curByte, c.cfg.MaxBytes)
 		}
 	}
-	if len(c.keys) != len(c.data) || len(c.keyIdx) != len(c.data) {
-		t.Fatalf("index mismatch: keys=%d data=%d idx=%d", len(c.keys), len(c.data), len(c.keyIdx))
+	if len(c.index) != len(c.entries) {
+		t.Fatalf("index mismatch: entries=%d index=%d", len(c.entries), len(c.index))
 	}
 	var sum uintptr
-	for _, e := range c.data {
+	for i, e := range c.entries {
+		if c.index[e.key] != int32(i) {
+			t.Fatalf("index of %q is %d, want %d", e.key, c.index[e.key], i)
+		}
 		sum += e.c
 	}
 	if sum != c.curByte {
@@ -40,15 +43,15 @@ func TestRejectedAdmissionLeavesCacheUnchanged(t *testing.T) {
 		}
 		c.Set(k, make([]byte, 1024))
 	}
-	before := len(c.data)
+	before := len(c.entries)
 	ev := c.evictions
 	c.Lookup("cold")
 	c.Set("cold", make([]byte, 4*1024)) // needs several victims, all more valuable
-	if len(c.data) != before || c.evictions != ev {
+	if len(c.entries) != before || c.evictions != ev {
 		t.Fatalf("rejected admission modified cache: entries %d->%d, evictions %d->%d",
-			before, len(c.data), ev, c.evictions)
+			before, len(c.entries), ev, c.evictions)
 	}
-	if _, ok := c.data["cold"]; ok {
+	if _, ok := c.index["cold"]; ok {
 		t.Fatal("cold object admitted")
 	}
 }
@@ -75,7 +78,30 @@ func TestReplaceExistingKey(t *testing.T) {
 	c := New(DefaultConfig(1 << 20))
 	c.Set("a", make([]byte, 100))
 	c.Set("a", make([]byte, 500))
-	if len(c.keys) != 1 || c.curByte != cost(500) {
-		t.Fatalf("replace failed: keys=%d bytes=%d", len(c.keys), c.curByte)
+	if len(c.entries) != 1 || c.curByte != cost(500) {
+		t.Fatalf("replace failed: entries=%d bytes=%d", len(c.entries), c.curByte)
+	}
+}
+
+// Evicting several victims at once must keep the index consistent.
+func TestMultiVictimEviction(t *testing.T) {
+	c := New(DefaultConfig(32 << 10))
+	for i := 0; i < 32; i++ {
+		c.Set(fmt.Sprintf("s%d", i), make([]byte, 900))
+	}
+	for j := 0; j < 100; j++ {
+		c.Lookup("big")
+	}
+	c.Set("big", make([]byte, 16<<10))
+	if _, ok := c.index["big"]; !ok {
+		t.Fatal("frequent large object not admitted")
+	}
+	for i, e := range c.entries {
+		if c.index[e.key] != int32(i) {
+			t.Fatalf("index broken after multi-victim eviction")
+		}
+	}
+	if c.curByte > c.cfg.MaxBytes {
+		t.Fatal("budget exceeded")
 	}
 }

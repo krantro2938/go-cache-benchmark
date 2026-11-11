@@ -31,7 +31,9 @@ Protocol (see `internal/bench/runner.go`): look-aside access — `Get`, and on a
 miss a fresh object of the key's size is allocated (simulated fetch from the
 source) and `Set`. Latency covers the cache calls only. GC/allocation metrics
 are `runtime.MemStats` deltas over the request loop; `gc_pause_us` is the mean
-pause per GC cycle (ΔPauseTotalNs / ΔNumGC). `memory_mb` is the HeapInuse
+pause per GC cycle (ΔPauseTotalNs / ΔNumGC); `alloc_bytes_per_op` is
+ΔTotalAlloc per request (independent of speed). `byte_hit_ratio` is the share of
+requested bytes served from the cache (`hit_ratio` counts requests). `memory_mb` is the HeapInuse
 delta after a forced GC with the cache alive, relative to a baseline taken
 before the cache is constructed (`live_mb` is the same for HeapAlloc).
 Zipf ranks are sampled exactly (inverse CDF) and mapped to keys by a random

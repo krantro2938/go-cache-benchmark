@@ -17,7 +17,6 @@ type CountMinSketch struct {
 	depth   int // d = number of hash functions (k_h)
 	width   int // w = counters per row
 	rows    [][]uint16
-	seeds   []uint32
 	adds    uint64 // total increments since last aging
 	ageEvry uint64 // halve counters after this many increments
 	resets  uint64 // number of agings performed so far
@@ -40,11 +39,6 @@ func NewCountMinSketch(epsilon, delta float64, ageEvery uint64) *CountMinSketch 
 	for i := range rows {
 		rows[i] = make([]uint16, width)
 	}
-	seeds := make([]uint32, depth)
-	for i := range seeds {
-		// Distinct odd seeds for independent hash functions.
-		seeds[i] = uint32(i)*0x9E3779B1 + 1
-	}
 	if ageEvery == 0 {
 		ageEvery = 10 * uint64(width)
 	}
@@ -52,7 +46,6 @@ func NewCountMinSketch(epsilon, delta float64, ageEvery uint64) *CountMinSketch 
 		depth:   depth,
 		width:   width,
 		rows:    rows,
-		seeds:   seeds,
 		ageEvry: ageEvery,
 	}
 }
@@ -63,22 +56,27 @@ func (c *CountMinSketch) Depth() int { return c.depth }
 // Width reports w (counters per row).
 func (c *CountMinSketch) Width() int { return c.width }
 
-// hash mixes a 64-bit key fingerprint with a per-row seed (FNV-style mix).
-func (c *CountMinSketch) hash(fp uint64, seed uint32) int {
-	h := fp ^ uint64(seed)
+// mix is a 64-bit finaliser (MurmurHash3 fmix64). Row positions are derived
+// from one mixed fingerprint by double hashing, g_i(x) = h1 + i*h2 mod w
+// (Kirsch and Mitzenmacher), which keeps the Count-Min guarantees while
+// hashing the key only once per operation.
+func mix(h uint64) uint64 {
 	h ^= h >> 33
 	h *= 0xff51afd7ed558ccd
 	h ^= h >> 33
 	h *= 0xc4ceb9fe1a85ec53
 	h ^= h >> 33
-	return int(h % uint64(c.width))
+	return h
 }
 
 // Increment records one access to the key fingerprint and ages the sketch
 // when the increment budget is exhausted.
 func (c *CountMinSketch) Increment(fp uint64) {
+	h := mix(fp)
+	h1, h2 := h&0xffffffff, (h>>32)|1
+	w := uint64(c.width)
 	for i := 0; i < c.depth; i++ {
-		j := c.hash(fp, c.seeds[i])
+		j := (h1 + uint64(i)*h2) % w
 		if c.rows[i][j] < math.MaxUint16 {
 			c.rows[i][j]++
 		}
@@ -92,8 +90,11 @@ func (c *CountMinSketch) Increment(fp uint64) {
 // Estimate returns the conservative (minimum) frequency for the fingerprint.
 func (c *CountMinSketch) Estimate(fp uint64) uint32 {
 	min := uint32(math.MaxUint32)
+	h := mix(fp)
+	h1, h2 := h&0xffffffff, (h>>32)|1
+	w := uint64(c.width)
 	for i := 0; i < c.depth; i++ {
-		j := c.hash(fp, c.seeds[i])
+		j := (h1 + uint64(i)*h2) % w
 		if v := uint32(c.rows[i][j]); v < min {
 			min = v
 		}

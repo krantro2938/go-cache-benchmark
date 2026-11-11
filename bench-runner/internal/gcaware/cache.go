@@ -79,16 +79,19 @@ type Cache struct {
 	alpha float64
 	beta  float64
 
-	data    map[string]*entry
-	keys    []string // parallel slice for O(1) random sampling
-	keyIdx  map[string]int
+	// Resident objects are stored by value in a dense slice (no per-object
+	// heap allocation for metadata, fewer pointers for the GC to scan) and
+	// located through a single index map. The dense slice also gives O(1)
+	// uniform sampling of eviction candidates; removal is swap-with-last.
+	entries []entry
+	index   map[string]int32
 	curByte uintptr
 
 	cms       *CountMinSketch
 	maxFreq   uint32 // running max for frequency normalisation
 	cmsResets uint64 // sketch agings already reflected in maxFreq
 
-	victimBuf []*entry // scratch space for two-stage admission
+	victimBuf []int32 // scratch space for two-stage admission (entry indices)
 
 	seq         uint64
 	ops         uint64
@@ -137,8 +140,7 @@ func New(cfg Config) *Cache {
 		cfg:         cfg,
 		alpha:       cfg.K * cfg.Lambda,
 		beta:        cfg.K * (1 - cfg.Lambda),
-		data:        make(map[string]*entry),
-		keyIdx:      make(map[string]int),
+		index:       make(map[string]int32),
 		cms:         NewCountMinSketch(cfg.CMSEpsilon, cfg.CMSDelta, cfg.CMSAgeEvery),
 		maxFreq:     1,
 		windowBytes: uintptr(cfg.WindowInitFrac * float64(cfg.MaxBytes)),
@@ -154,10 +156,7 @@ func (c *Cache) HashFuncs() int { return c.cms.Depth() }
 func (c *Cache) SampleSize() int { return c.cfg.SampleSize }
 
 func (c *Cache) fingerprint(key string) uint64 {
-	var h maphash.Hash
-	h.SetSeed(c.hseed)
-	_, _ = h.WriteString(key)
-	return h.Sum64()
+	return maphash.String(c.hseed, key)
 }
 
 // normFreq returns f(x) in [0,1]: the estimated frequency divided by the
@@ -241,10 +240,10 @@ func (c *Cache) access(key string) ([]byte, bool) {
 	fp := c.fingerprint(key)
 	c.cms.Increment(fp)
 	c.ops++
-	if e, ok := c.data[key]; ok {
+	if i, ok := c.index[key]; ok {
 		c.hits++
 		c.maybeAdapt()
-		return e.value, true
+		return c.entries[i].value, true
 	}
 	c.misses++
 	c.maybeAdapt()
@@ -267,8 +266,8 @@ func (c *Cache) admit(key string, fp uint64, data []byte) {
 	}
 
 	// Updating a resident key replaces its value in place.
-	if _, ok := c.data[key]; ok {
-		c.remove(key)
+	if i, ok := c.index[key]; ok {
+		c.removeAt(i)
 	}
 
 	// If there is room, insert directly.
@@ -283,21 +282,25 @@ func (c *Cache) admit(key string, fp uint64, data []byte) {
 	chosen := c.victimBuf[:0] // reused buffer: no allocation per admission
 	var freed uintptr
 	for freed < need {
-		victim := c.selectVictim(chosen)
-		if victim == nil {
+		vi, vVal := c.selectVictim(chosen)
+		if vi < 0 {
+			c.victimBuf = chosen[:0]
 			return // nothing left to evict; cache unchanged
 		}
-		if vNew <= c.value(victim.fp, victim.c) {
+		if vNew <= vVal {
+			c.victimBuf = chosen[:0]
 			return // rejected; cache unchanged
 		}
-		chosen = append(chosen, victim)
-		freed += victim.c
+		chosen = append(chosen, vi)
+		freed += c.entries[vi].c
 	}
 	c.victimBuf = chosen[:0]
 
-	// Stage 2: commit.
-	for _, v := range chosen {
-		c.remove(v.key)
+	// Stage 2: commit. Removal by swap-with-last moves entries, so remove
+	// in descending index order: a later (smaller) index is never moved.
+	sortDesc(chosen)
+	for _, vi := range chosen {
+		c.removeAt(vi)
 		c.evictions++
 	}
 	c.insert(key, fp, data, cNew)
@@ -308,59 +311,69 @@ func (c *Cache) curByteAfterInsert(cNew uintptr) bool {
 }
 
 // selectVictim samples k_s resident entries outside `exclude` and returns the
-// one with the lowest value V, skipping objects inside the protected window.
-// If every sampled entry is protected, the lowest-valued sampled entry is
-// returned so that the cache can still make progress.
-func (c *Cache) selectVictim(exclude []*entry) *entry {
-	n := len(c.keys)
+// index and value V of the one with the lowest V, skipping objects inside the
+// protected window. If every sampled entry is protected, the lowest-valued
+// sampled entry is returned so that the cache can still make progress.
+// It returns -1 if no candidate is available.
+func (c *Cache) selectVictim(exclude []int32) (int32, float64) {
+	n := len(c.entries)
 	if n == 0 || len(exclude) >= n {
-		return nil
+		return -1, 0
 	}
 	windowEdge := c.windowEdge()
-	var victim, fallback *entry
+	victim, fallback := int32(-1), int32(-1)
 	var vMin, fMin float64
 	for i := 0; i < c.cfg.SampleSize; i++ {
-		e := c.data[c.keys[c.rng.Intn(n)]]
-		if e == nil {
+		idx := int32(c.rng.Intn(n))
+		if containsIdx(exclude, idx) {
 			continue
 		}
-		if contains(exclude, e) {
-			continue
-		}
+		e := &c.entries[idx]
 		v := c.value(e.fp, e.c)
-		if fallback == nil || v < fMin {
-			fallback, fMin = e, v
+		if fallback < 0 || v < fMin {
+			fallback, fMin = idx, v
 		}
 		// Protect recently admitted objects (the adaptive window).
 		if e.seq > windowEdge {
 			continue
 		}
-		if victim == nil || v < vMin {
-			victim, vMin = e, v
+		if victim < 0 || v < vMin {
+			victim, vMin = idx, v
 		}
 	}
-	if victim != nil {
-		return victim
+	if victim >= 0 {
+		return victim, vMin
 	}
-	if fallback != nil {
-		return fallback
+	if fallback >= 0 {
+		return fallback, fMin
 	}
-	// All samples hit excluded keys: scan for any non-excluded entry.
-	for _, k := range c.keys {
-		if e := c.data[k]; !contains(exclude, e) {
-			return e
+	// All samples hit excluded entries: take any non-excluded one.
+	for idx := int32(0); idx < int32(n); idx++ {
+		if !containsIdx(exclude, idx) {
+			e := &c.entries[idx]
+			return idx, c.value(e.fp, e.c)
 		}
 	}
-	return nil
+	return -1, 0
 }
 
-func contains(set []*entry, e *entry) bool {
-	for _, x := range set {
-		if x == e {
+func containsIdx(set []int32, x int32) bool {
+	for _, v := range set {
+		if v == x {
 			return true
 		}
 	}
 	return false
+}
+
+// sortDesc sorts a short slice of indices in descending order (insertion sort;
+// the victim set has a handful of elements).
+func sortDesc(a []int32) {
+	for i := 1; i < len(a); i++ {
+		for j := i; j > 0 && a[j] > a[j-1]; j-- {
+			a[j], a[j-1] = a[j-1], a[j]
+		}
+	}
 }
 
 // windowEdge returns the largest admission sequence number that is NOT
@@ -374,7 +387,7 @@ func (c *Cache) windowEdge() uint64 {
 	if frac > 1 {
 		frac = 1
 	}
-	protected := uint64(float64(len(c.keys)) * frac)
+	protected := uint64(float64(len(c.entries)) * frac)
 	if protected >= c.seq {
 		return 0
 	}
@@ -383,27 +396,24 @@ func (c *Cache) windowEdge() uint64 {
 
 func (c *Cache) insert(key string, fp uint64, data []byte, cNew uintptr) {
 	c.seq++
-	e := &entry{key: key, fp: fp, value: data, c: cNew, seq: c.seq}
-	c.data[key] = e
-	c.keyIdx[key] = len(c.keys)
-	c.keys = append(c.keys, key)
+	c.index[key] = int32(len(c.entries))
+	c.entries = append(c.entries, entry{key: key, fp: fp, value: data, c: cNew, seq: c.seq})
 	c.curByte += cNew
 }
 
-func (c *Cache) remove(key string) {
-	e, ok := c.data[key]
-	if !ok {
-		return
-	}
+// removeAt deletes the entry at index i in O(1) by moving the last entry
+// into its slot.
+func (c *Cache) removeAt(i int32) {
+	e := &c.entries[i]
 	c.curByte -= e.c
-	delete(c.data, key)
-	// O(1) swap-remove from the keys slice.
-	idx := c.keyIdx[key]
-	last := len(c.keys) - 1
-	c.keys[idx] = c.keys[last]
-	c.keyIdx[c.keys[idx]] = idx
-	c.keys = c.keys[:last]
-	delete(c.keyIdx, key)
+	delete(c.index, e.key)
+	last := int32(len(c.entries) - 1)
+	if i != last {
+		c.entries[i] = c.entries[last]
+		c.index[c.entries[i].key] = i
+	}
+	c.entries[last] = entry{} // drop references so the GC can free the value
+	c.entries = c.entries[:last]
 }
 
 // maybeAdapt runs AdaptWindow on the configured interval.
@@ -464,7 +474,7 @@ func (c *Cache) Stats() Stats {
 		Misses:      c.misses,
 		Evictions:   c.evictions,
 		HitRatio:    c.HitRatio(),
-		Entries:     len(c.data),
+		Entries:     len(c.entries),
 		Bytes:       c.curByte,
 		WindowBytes: c.windowBytes,
 		HashFuncs:   c.cms.Depth(),
