@@ -12,8 +12,8 @@
 //	RESULTS_DIR  output directory (default /app/results)
 //	BENCH_SCALE  multiplies key-space sizes, request counts and cache budgets
 //	             (default 1; e.g. 0.05 for a quick smoke test)
-//	SERIES       comma-separated subset of: size,value,skew,mixed,lambda
-//	             (default: all)
+//	SERIES       comma-separated subset of: size,value,skew,mixed,lambda,grid
+//	             (default: size,value,skew,mixed,lambda; grid is opt-in)
 package main
 
 import (
@@ -81,6 +81,22 @@ func main() {
 	// cost term is designed for.
 	if enabled["mixed"] {
 		run("mixed", "mixed_16mb", mixedConfig(), scb(16<<20), allCaches)
+	}
+
+	// 6. λ × budget grid of the proposed method on the heterogeneous workload
+	// (for the 3D surface figure). Opt-in: SERIES=grid.
+	if enabled["grid"] {
+		for _, mb := range []int64{4, 8, 16, 32, 64} {
+			for _, l := range []float64{0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0} {
+				l, mb := l, mb
+				run("grid", fmt.Sprintf("grid_%dmb_lambda_%.1f", mb, l), mixedConfig(), scb(mb<<20),
+					func(budget int64, wl *bench.Workload) []func() (caches.Cache, error) {
+						return []func() (caches.Cache, error){
+							func() (caches.Cache, error) { return caches.NewGCAwareCacheLambda(budget, l) },
+						}
+					})
+			}
+		}
 	}
 
 	// 5. λ sweep of the proposed method on the heterogeneous workload.

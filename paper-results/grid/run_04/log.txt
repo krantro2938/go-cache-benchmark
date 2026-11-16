@@ -1,0 +1,110 @@
+=== grid / grid_4mb_lambda_0.0 (seed 4) ===
+  GCAware            hit=0.4654 ops/s=655861 p99=1.11us mem=8.2MB alloc=1813.4MB/s pause=67.6us
+=== grid / grid_4mb_lambda_0.1 (seed 4) ===
+  GCAware            hit=0.5272 ops/s=672442 p99=2.08us mem=13.6MB alloc=1637.4MB/s pause=65.7us
+=== grid / grid_4mb_lambda_0.2 (seed 4) ===
+  GCAware            hit=0.5227 ops/s=680558 p99=2.36us mem=15.3MB alloc=1643.7MB/s pause=68.4us
+=== grid / grid_4mb_lambda_0.3 (seed 4) ===
+  GCAware            hit=0.5204 ops/s=701296 p99=2.33us mem=15.3MB alloc=1678.8MB/s pause=66.6us
+=== grid / grid_4mb_lambda_0.4 (seed 4) ===
+  GCAware            hit=0.5191 ops/s=674168 p99=2.52us mem=15.3MB alloc=1600.4MB/s pause=81.6us
+=== grid / grid_4mb_lambda_0.5 (seed 4) ===
+  GCAware            hit=0.5183 ops/s=688576 p99=2.45us mem=14.9MB alloc=1616.7MB/s pause=61.9us
+=== grid / grid_4mb_lambda_0.6 (seed 4) ===
+  GCAware            hit=0.5145 ops/s=692740 p99=2.57us mem=15.5MB alloc=1590.7MB/s pause=71.8us
+=== grid / grid_4mb_lambda_0.7 (seed 4) ===
+  GCAware            hit=0.5095 ops/s=702844 p99=2.58us mem=15.1MB alloc=1573.3MB/s pause=82.6us
+=== grid / grid_4mb_lambda_0.8 (seed 4) ===
+  GCAware            hit=0.4999 ops/s=702543 p99=2.69us mem=16.3MB alloc=1522.8MB/s pause=71.2us
+=== grid / grid_4mb_lambda_0.9 (seed 4) ===
+  GCAware            hit=0.4868 ops/s=737109 p99=2.70us mem=15.0MB alloc=1558.7MB/s pause=91.0us
+=== grid / grid_4mb_lambda_1.0 (seed 4) ===
+  GCAware            hit=0.4760 ops/s=760681 p99=2.61us mem=13.9MB alloc=1569.6MB/s pause=67.6us
+=== grid / grid_8mb_lambda_0.0 (seed 4) ===
+  GCAware            hit=0.5462 ops/s=641976 p99=1.29us mem=14.5MB alloc=1749.7MB/s pause=67.1us
+=== grid / grid_8mb_lambda_0.1 (seed 4) ===
+  GCAware            hit=0.5880 ops/s=679091 p99=2.73us mem=21.7MB alloc=1615.8MB/s pause=71.2us
+=== grid / grid_8mb_lambda_0.2 (seed 4) ===
+  GCAware            hit=0.5845 ops/s=680607 p99=2.87us mem=21.9MB alloc=1596.1MB/s pause=66.3us
+=== grid / grid_8mb_lambda_0.3 (seed 4) ===
+  GCAware            hit=0.5824 ops/s=669558 p99=2.94us mem=22.2MB alloc=1533.1MB/s pause=77.9us
+=== grid / grid_8mb_lambda_0.4 (seed 4) ===
+  GCAware            hit=0.5782 ops/s=722197 p99=2.82us mem=21.9MB alloc=1615.6MB/s pause=74.8us
+=== grid / grid_8mb_lambda_0.5 (seed 4) ===
+  GCAware            hit=0.5731 ops/s=688717 p99=3.00us mem=22.1MB alloc=1496.0MB/s pause=74.2us
+=== grid / grid_8mb_lambda_0.6 (seed 4) ===
+  GCAware            hit=0.5637 ops/s=741467 p99=2.76us mem=21.9MB alloc=1557.3MB/s pause=68.7us
+=== grid / grid_8mb_lambda_0.7 (seed 4) ===
+  GCAware            hit=0.5543 ops/s=745776 p99=3.01us mem=20.9MB alloc=1520.9MB/s pause=69.8us
+=== grid / grid_8mb_lambda_0.8 (seed 4) ===
+  GCAware            hit=0.5406 ops/s=717363 p99=3.64us mem=20.9MB alloc=1430.4MB/s pause=76.2us
+=== grid / grid_8mb_lambda_0.9 (seed 4) ===
+  GCAware            hit=0.5333 ops/s=724644 p99=3.82us mem=20.5MB alloc=1434.6MB/s pause=71.9us
+=== grid / grid_8mb_lambda_1.0 (seed 4) ===
+  GCAware            hit=0.5212 ops/s=755334 p99=3.42us mem=21.5MB alloc=1464.0MB/s pause=68.2us
+=== grid / grid_16mb_lambda_0.0 (seed 4) ===
+  GCAware            hit=0.6570 ops/s=683107 p99=1.41us mem=26.2MB alloc=1770.7MB/s pause=87.4us
+=== grid / grid_16mb_lambda_0.1 (seed 4) ===
+  GCAware            hit=0.6643 ops/s=709000 p99=3.12us mem=31.8MB alloc=1597.7MB/s pause=104.5us
+=== grid / grid_16mb_lambda_0.2 (seed 4) ===
+  GCAware            hit=0.6571 ops/s=733173 p99=3.06us mem=32.5MB alloc=1565.4MB/s pause=77.6us
+=== grid / grid_16mb_lambda_0.3 (seed 4) ===
+  GCAware            hit=0.6485 ops/s=732330 p99=3.25us mem=31.8MB alloc=1513.4MB/s pause=89.9us
+=== grid / grid_16mb_lambda_0.4 (seed 4) ===
+  GCAware            hit=0.6371 ops/s=764271 p99=3.17us mem=31.4MB alloc=1531.2MB/s pause=74.7us
+=== grid / grid_16mb_lambda_0.5 (seed 4) ===
+  GCAware            hit=0.6245 ops/s=719288 p99=3.91us mem=32.0MB alloc=1402.4MB/s pause=74.0us
+=== grid / grid_16mb_lambda_0.6 (seed 4) ===
+  GCAware            hit=0.6103 ops/s=754067 p99=3.98us mem=32.3MB alloc=1441.3MB/s pause=78.1us
+=== grid / grid_16mb_lambda_0.7 (seed 4) ===
+  GCAware            hit=0.6018 ops/s=756866 p99=4.43us mem=32.4MB alloc=1402.8MB/s pause=83.4us
+=== grid / grid_16mb_lambda_0.8 (seed 4) ===
+  GCAware            hit=0.5965 ops/s=751390 p99=4.59us mem=32.8MB alloc=1374.4MB/s pause=76.1us
+=== grid / grid_16mb_lambda_0.9 (seed 4) ===
+  GCAware            hit=0.5871 ops/s=755976 p99=4.95us mem=31.7MB alloc=1363.4MB/s pause=71.3us
+=== grid / grid_16mb_lambda_1.0 (seed 4) ===
+  GCAware            hit=0.5764 ops/s=780592 p99=4.32us mem=31.5MB alloc=1393.9MB/s pause=76.0us
+=== grid / grid_32mb_lambda_0.0 (seed 4) ===
+  GCAware            hit=0.7672 ops/s=742889 p99=1.61us mem=49.6MB alloc=1864.6MB/s pause=79.0us
+=== grid / grid_32mb_lambda_0.1 (seed 4) ===
+  GCAware            hit=0.7440 ops/s=782471 p99=3.42us mem=49.7MB alloc=1536.9MB/s pause=79.8us
+=== grid / grid_32mb_lambda_0.2 (seed 4) ===
+  GCAware            hit=0.7196 ops/s=761236 p99=4.01us mem=50.6MB alloc=1405.5MB/s pause=83.5us
+=== grid / grid_32mb_lambda_0.3 (seed 4) ===
+  GCAware            hit=0.7034 ops/s=759271 p99=4.29us mem=49.2MB alloc=1361.2MB/s pause=78.7us
+=== grid / grid_32mb_lambda_0.4 (seed 4) ===
+  GCAware            hit=0.6835 ops/s=772008 p99=4.85us mem=51.7MB alloc=1336.4MB/s pause=77.3us
+=== grid / grid_32mb_lambda_0.5 (seed 4) ===
+  GCAware            hit=0.6737 ops/s=737118 p99=5.58us mem=50.6MB alloc=1248.5MB/s pause=102.3us
+=== grid / grid_32mb_lambda_0.6 (seed 4) ===
+  GCAware            hit=0.6673 ops/s=807392 p99=4.95us mem=51.1MB alloc=1338.6MB/s pause=69.5us
+=== grid / grid_32mb_lambda_0.7 (seed 4) ===
+  GCAware            hit=0.6580 ops/s=807459 p99=5.30us mem=50.3MB alloc=1321.3MB/s pause=81.3us
+=== grid / grid_32mb_lambda_0.8 (seed 4) ===
+  GCAware            hit=0.6521 ops/s=821427 p99=5.28us mem=50.8MB alloc=1330.6MB/s pause=77.4us
+=== grid / grid_32mb_lambda_0.9 (seed 4) ===
+  GCAware            hit=0.6534 ops/s=821820 p99=5.16us mem=50.2MB alloc=1328.7MB/s pause=74.6us
+=== grid / grid_32mb_lambda_1.0 (seed 4) ===
+  GCAware            hit=0.6437 ops/s=835861 p99=4.86us mem=50.6MB alloc=1356.8MB/s pause=72.5us
+=== grid / grid_64mb_lambda_0.0 (seed 4) ===
+  GCAware            hit=0.8591 ops/s=875149 p99=1.52us mem=81.9MB alloc=1833.6MB/s pause=73.6us
+=== grid / grid_64mb_lambda_0.1 (seed 4) ===
+  GCAware            hit=0.7941 ops/s=916166 p99=3.55us mem=85.4MB alloc=1447.7MB/s pause=75.5us
+=== grid / grid_64mb_lambda_0.2 (seed 4) ===
+  GCAware            hit=0.7671 ops/s=878754 p99=4.36us mem=85.1MB alloc=1326.3MB/s pause=77.0us
+=== grid / grid_64mb_lambda_0.3 (seed 4) ===
+  GCAware            hit=0.7518 ops/s=924020 p99=4.38us mem=85.2MB alloc=1355.0MB/s pause=76.9us
+=== grid / grid_64mb_lambda_0.4 (seed 4) ===
+  GCAware            hit=0.7393 ops/s=900686 p99=4.76us mem=85.9MB alloc=1287.3MB/s pause=76.8us
+=== grid / grid_64mb_lambda_0.5 (seed 4) ===
+  GCAware            hit=0.7317 ops/s=930973 p99=4.67us mem=87.3MB alloc=1319.6MB/s pause=71.3us
+=== grid / grid_64mb_lambda_0.6 (seed 4) ===
+  GCAware            hit=0.7270 ops/s=877972 p99=5.22us mem=85.5MB alloc=1235.9MB/s pause=75.4us
+=== grid / grid_64mb_lambda_0.7 (seed 4) ===
+  GCAware            hit=0.7234 ops/s=873377 p99=5.22us mem=85.7MB alloc=1213.1MB/s pause=75.5us
+=== grid / grid_64mb_lambda_0.8 (seed 4) ===
+  GCAware            hit=0.7261 ops/s=938012 p99=4.93us mem=87.5MB alloc=1310.5MB/s pause=94.3us
+=== grid / grid_64mb_lambda_0.9 (seed 4) ===
+  GCAware            hit=0.7238 ops/s=956845 p99=4.58us mem=86.5MB alloc=1331.7MB/s pause=74.9us
+=== grid / grid_64mb_lambda_1.0 (seed 4) ===
+  GCAware            hit=0.7128 ops/s=915341 p99=4.73us mem=88.3MB alloc=1279.0MB/s pause=76.4us
