@@ -35,7 +35,7 @@ def line(ax, x, cfgs, cache, m, scale=1.0):
 
 def panel(ax, letter):
     ax.text(-0.13, 1.03, letter, transform=ax.transAxes, fontsize=10, fontweight='bold', va='bottom')
-    ax.grid(True, color='#d0d0d0', lw=0.4)
+    ax.grid(True, color='#c8c8c8', lw=0.5)
     ax.yaxis.set_major_formatter(comma)
 
 def save(fig, name):

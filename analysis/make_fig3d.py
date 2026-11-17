@@ -30,7 +30,7 @@ def banded(ax, X, Y, Z, edges, shades):
                 zc = np.mean([v[2] for v in t])
                 k = min(np.searchsorted(edges, zc, side='right') - 1, len(shades) - 1)
                 tris.append(t); cols.append(shades[max(k, 0)])
-    pc = Poly3DCollection(tris, facecolors=cols, edgecolors='#5a5a5a', linewidths=0.25)
+    pc = Poly3DCollection(tris, facecolors=cols, edgecolors='#4a4a4a', linewidths=0.5)
     ax.add_collection3d(pc)
     ax.set_xlim(X.min(), X.max()); ax.set_ylim(Y.min(), Y.max())
     ax.set_zlim(edges[0], edges[-1])
@@ -38,11 +38,11 @@ def banded(ax, X, Y, Z, edges, shades):
 def style(ax):
     for a in (ax.xaxis, ax.yaxis, ax.zaxis):
         a.pane.set_facecolor((1, 1, 1, 0)); a.pane.set_edgecolor('#8a8a8a')
-        a._axinfo['grid'].update(color='#c4c4c4', linewidth=0.45)
+        a._axinfo['grid'].update(color='#bdbdbd', linewidth=0.5)
     ax.tick_params(axis='both', which='major', pad=0, labelsize=7)
 
 def legend(fig, x, edges, shades, unit):
-    hs = [Patch(facecolor=s, edgecolor='#5a5a5a', lw=0.4, label='%s–%s' % (fmt(a), fmt(b)))
+    hs = [Patch(facecolor=s, edgecolor='#4a4a4a', lw=0.5, label='%s–%s' % (fmt(a), fmt(b)))
           for a, b, s in zip(edges[:-1], edges[1:], shades)]
     fig.legend(handles=hs, loc='lower center', bbox_to_anchor=(x, -0.01), ncol=4, fontsize=6.5,
                frameon=False, handlelength=1.0, columnspacing=0.8, title=unit, title_fontsize=7)
